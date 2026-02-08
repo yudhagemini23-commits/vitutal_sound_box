@@ -1,5 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <style name="Theme.App.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#000000</item>
 
-    <style name="Theme.VirtualSoundbox" parent="android:Theme.Material.Light.NoActionBar" />
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+
+        <item name="postSplashScreenTheme">@style/Theme.VirtualSoundbox</item>
+    </style>
+
+    <style name="Theme.VirtualSoundbox" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">#2E7D32</item>
+    </style>
 </resources>

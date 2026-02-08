@@ -69,6 +69,9 @@ dependencies {
     // 4. Icons Extended (Opsional: Agar bisa pakai icon 'History', 'Settings', dll)
     implementation("androidx.compose.material:material-icons-extended:1.6.0")
 
+    implementation("com.google.android.material:material:1.12.0")
+    implementation("androidx.core:core-splashscreen:1.0.1")
+
     // --- TESTING (Bawaan) ---
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
