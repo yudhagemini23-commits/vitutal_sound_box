@@ -27,6 +27,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.app.virtualsoundbox.service.NotificationListener
 import com.app.virtualsoundbox.ui.dashboard.DashboardScreen
+import com.app.virtualsoundbox.ui.login.LoginScreen
 import com.app.virtualsoundbox.ui.onboarding.OnboardingScreen
 import com.app.virtualsoundbox.ui.theme.VirtualSoundboxTheme
 
@@ -43,13 +44,16 @@ class MainActivity : ComponentActivity() {
             VirtualSoundboxTheme {
                 val lifecycleOwner = LocalLifecycleOwner.current
 
-                // State untuk memantau status izin secara reaktif
+                // 1. States
                 var isNotifEnabled by remember { mutableStateOf(isNotificationServiceEnabled()) }
                 var showOnboarding by rememberSaveable {
                     mutableStateOf(sharedPref.getBoolean("isFirstRun", true))
                 }
+                var userName by remember {
+                    mutableStateOf(sharedPref.getString("userName", null))
+                }
 
-                // --- OBSERVER BARU: Cek Izin setiap kali user balik ke App ---
+                // 2. Observer Lifecycle
                 DisposableEffect(lifecycleOwner) {
                     val observer = LifecycleEventObserver { _, event ->
                         if (event == Lifecycle.Event.ON_RESUME) {
@@ -62,10 +66,10 @@ class MainActivity : ComponentActivity() {
 
                 val permissionLauncher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.RequestPermission()
-                ) { /* Handle result */ }
+                ) { /* Handle Result */ }
 
-                LaunchedEffect(isNotifEnabled, showOnboarding) {
-                    // Minta izin Post Notif untuk Android 13+
+                // 3. Side Effect Service
+                LaunchedEffect(isNotifEnabled, showOnboarding, userName) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS)
                             != PackageManager.PERMISSION_GRANTED) {
@@ -73,8 +77,8 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    // Jalankan service jika izin oke dan bukan onboarding
-                    if (isNotifEnabled && !showOnboarding) {
+                    // Service jalan jika sudah selesai onboarding & login
+                    if (isNotifEnabled && !showOnboarding && userName != null) {
                         startSoundService()
                     }
                 }
@@ -83,21 +87,38 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    if (showOnboarding) {
-                        OnboardingScreen(
-                            onFinished = {
-                                sharedPref.edit().putBoolean("isFirstRun", false).apply()
-                                showOnboarding = false
-                            },
-                            onOpenNotifSettings = { openNotificationSettings() },
-                            onOptimizeBattery = { requestChinesePhonePermissions(this@MainActivity) }
-                        )
-                    } else {
-                        DashboardScreen(
-                            isNotificationEnabled = isNotifEnabled,
-                            onOpenNotificationSettings = { openNotificationSettings() },
-                            onOptimizeBattery = { requestChinesePhonePermissions(this@MainActivity) }
-                        )
+                    // --- NAVIGATION FLOW ---
+                    when {
+                        showOnboarding -> {
+                            // Onboarding (Edukasi Awal - Belum Butuh Nama)
+                            OnboardingScreen(
+                                isNotificationEnabled = isNotifEnabled,
+                                onFinished = {
+                                    sharedPref.edit().putBoolean("isFirstRun", false).apply()
+                                    showOnboarding = false
+                                },
+                                onOpenNotifSettings = { openNotificationSettings() },
+                                onOptimizeBattery = { requestChinesePhonePermissions(this@MainActivity) }
+                            )
+                        }
+                        userName == null -> {
+                            // Login (Input Nama)
+                            LoginScreen(
+                                onNameSaved = { name ->
+                                    sharedPref.edit().putString("userName", name).apply()
+                                    userName = name
+                                }
+                            )
+                        }
+                        else -> {
+                            // Dashboard (Tampilkan Nama)
+                            DashboardScreen(
+                                userName = userName!!,
+                                isNotificationEnabled = isNotifEnabled,
+                                onOpenNotificationSettings = { openNotificationSettings() },
+                                onOptimizeBattery = { requestChinesePhonePermissions(this@MainActivity) }
+                            )
+                        }
                     }
                 }
             }
@@ -108,7 +129,6 @@ class MainActivity : ComponentActivity() {
         try {
             startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
         } catch (e: Exception) {
-            // Fallback jika intent gagal
             startActivity(Intent(Settings.ACTION_SETTINGS))
         }
     }

@@ -8,6 +8,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.Security
@@ -28,6 +29,8 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun OnboardingScreen(
+    // Parameter userName SAYA HAPUS karena user belum login
+    isNotificationEnabled: Boolean,
     onFinished: () -> Unit,
     onOpenNotifSettings: () -> Unit,
     onOptimizeBattery: () -> Unit
@@ -44,8 +47,25 @@ fun OnboardingScreen(
     Scaffold(
         containerColor = Color.White,
         bottomBar = {
-            Column(modifier = Modifier.padding(24.dp).navigationBarsPadding()) {
-                // Tombol Utama
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp)
+                    .navigationBarsPadding(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Indikator Titik
+                Row(
+                    modifier = Modifier.padding(bottom = 16.dp),
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    repeat(pages.size) { iteration ->
+                        val color = if (pagerState.currentPage == iteration) Color(0xFF2E7D32) else Color(0xFFE0E0E0)
+                        Box(modifier = Modifier.padding(4.dp).size(8.dp).background(color, CircleShape))
+                    }
+                }
+
+                // Tombol Navigasi
                 Button(
                     onClick = {
                         if (pagerState.currentPage < pages.size - 1) {
@@ -59,22 +79,9 @@ fun OnboardingScreen(
                     shape = MaterialTheme.shapes.large
                 ) {
                     Text(
-                        if (pagerState.currentPage == pages.size - 1) "Mulai Berjualan Sekarang" else "Lanjut",
+                        text = if (pagerState.currentPage == pages.size - 1) "Lanjut ke Login" else "Lanjut",
                         fontWeight = FontWeight.Bold
                     )
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Indikator Titik
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    repeat(pages.size) { iteration ->
-                        val color = if (pagerState.currentPage == iteration) Color(0xFF2E7D32) else Color(0xFFE0E0E0)
-                        Box(modifier = Modifier.padding(4.dp).size(8.dp).background(color, CircleShape))
-                    }
                 }
             }
         }
@@ -83,48 +90,68 @@ fun OnboardingScreen(
             state = pagerState,
             modifier = Modifier.fillMaxSize().padding(padding)
         ) { index ->
-            PageLayout(pages[index], onOpenNotifSettings, onOptimizeBattery)
+            OnboardingPageLayout(
+                page = pages[index],
+                isNotifEnabled = isNotificationEnabled,
+                onNotif = onOpenNotifSettings,
+                onOptimize = onOptimizeBattery
+            )
         }
     }
 }
 
 @Composable
-fun PageLayout(page: OnboardingData, onNotif: () -> Unit, onOptimize: () -> Unit) {
+fun OnboardingPageLayout(
+    page: OnboardingData,
+    isNotifEnabled: Boolean,
+    onNotif: () -> Unit,
+    onOptimize: () -> Unit
+) {
     Column(
         modifier = Modifier.fillMaxSize().padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
         // Icon Circle
-        Surface(modifier = Modifier.size(100.dp), color = Color(0xFFF1F8E9), shape = CircleShape) {
+        Surface(modifier = Modifier.size(120.dp), color = Color(0xFFF1F8E9), shape = CircleShape) {
             Box(contentAlignment = Alignment.Center) {
-                Icon(page.icon, contentDescription = null, tint = Color(0xFF2E7D32), modifier = Modifier.size(48.dp))
+                Icon(page.icon, contentDescription = null, tint = Color(0xFF2E7D32), modifier = Modifier.size(56.dp))
             }
         }
 
         Spacer(modifier = Modifier.height(40.dp))
 
-        Text(page.title, fontSize = 24.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
+        Text(page.title, fontSize = 26.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, lineHeight = 32.sp)
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        Text(page.desc, fontSize = 16.sp, color = Color.Gray, textAlign = TextAlign.Center, lineHeight = 24.sp)
+        Text(page.desc, fontSize = 15.sp, color = Color.Gray, textAlign = TextAlign.Center, lineHeight = 24.sp)
 
         if (page is OnboardingData.NotifAccess || page is OnboardingData.ChinaPhone) {
             Spacer(modifier = Modifier.height(32.dp))
+
+            val isDone = (page is OnboardingData.NotifAccess && isNotifEnabled)
+
             OutlinedButton(
-                onClick = { if (page is OnboardingData.NotifAccess) onNotif() else onOptimize() },
-                border = BorderStroke(1.dp, Color(0xFF2E7D32))
+                onClick = { if (!isDone) { if (page is OnboardingData.NotifAccess) onNotif() else onOptimize() } },
+                border = BorderStroke(1.dp, if (isDone) Color(0xFF2E7D32) else Color(0xFF2E7D32))
             ) {
-                Text("Klik Untuk Mengatur", color = Color(0xFF2E7D32))
+                if (isDone) {
+                    Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Izin Sudah Aktif")
+                } else {
+                    Text("Klik Untuk Mengatur", color = Color(0xFF2E7D32))
+                }
             }
         }
     }
 }
 
 sealed class OnboardingData(val title: String, val desc: String, val icon: ImageVector) {
+    // Sapaan Generic untuk User Baru
     object Welcome : OnboardingData(
-        "Selamat Datang, Juragan!",
+        "Halo",
         "Sound Horee siap bantu bacakan nominal uang masuk secara otomatis. Fokus melayani pelanggan, biar kami yang urus suaranya.",
         Icons.Default.Star
     )
@@ -134,13 +161,13 @@ sealed class OnboardingData(val title: String, val desc: String, val icon: Image
         Icons.Default.NotificationsActive
     )
     object ChinaPhone : OnboardingData(
-        "Khusus HP Xiaomi/Oppo/Vivo",
+        "Optimasi HP China",
         "Aktifkan 'Auto-Start' agar Sound Horee tetap bersuara kencang meskipun layar HP sedang terkunci atau mati.",
         Icons.Default.RocketLaunch
     )
     object GojekQris : OnboardingData(
-        "Support QRIS Gojek",
-        "Kini fitur deteksi transaksi Gojek sudah tersedia. Setiap notifikasi pembayaran Gojek akan otomatis dibacakan.",
+        "Baru: Deteksi QRIS Gojek",
+        "Kini Sound Horee bisa mendeteksi notifikasi dari aplikasi Gojek secara akurat untuk setiap transaksi QRIS Anda.",
         Icons.Default.Security
     )
 }

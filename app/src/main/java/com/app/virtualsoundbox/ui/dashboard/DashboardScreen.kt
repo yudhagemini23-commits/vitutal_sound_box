@@ -8,7 +8,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.NotificationsActive
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -29,15 +28,17 @@ import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Locale
 
+// --- PERHATIKAN PARAMETER userName DI SINI ---
 @Composable
 fun DashboardScreen(
-    isNotificationEnabled: Boolean,      // Parameter 1: Status Izin
-    onOpenNotificationSettings: () -> Unit, // Parameter 2: Aksi buka setting notif
-    onOptimizeBattery: () -> Unit,          // Parameter 3: Aksi optimasi HP China
+    userName: String,                   // Parameter Wajib dari Login
+    isNotificationEnabled: Boolean,
+    onOpenNotificationSettings: () -> Unit,
+    onOptimizeBattery: () -> Unit
 ) {
     val context = LocalContext.current
 
-    // Inisialisasi ViewModel & Repository
+    // Setup ViewModel & DB
     val db = AppDatabase.getDatabase(context)
     val repository = TransactionRepository(db.transactionDao())
     val factory = DashboardViewModelFactory(repository)
@@ -46,7 +47,6 @@ fun DashboardScreen(
     val totalToday by viewModel.totalToday.collectAsStateWithLifecycle()
     val transactions by viewModel.transactions.collectAsStateWithLifecycle()
 
-    // Pengelompokan transaksi berdasarkan tanggal
     val groupedTransactions = transactions.groupBy { trx ->
         SimpleDateFormat("dd MMM yyyy", Locale("id", "ID")).format(trx.timestamp)
     }
@@ -59,7 +59,7 @@ fun DashboardScreen(
                     .statusBarsPadding()
                     .padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
-                // --- 1. CARD STATUS IZIN (DINAMIS) ---
+                // 1. Status Izin Notifikasi
                 Surface(
                     onClick = onOpenNotificationSettings,
                     color = if (isNotificationEnabled) Color(0xFFE8F5E9) else Color(0xFFFFEBEE),
@@ -94,7 +94,7 @@ fun DashboardScreen(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // --- 2. CARD OPTIMASI BATERAI (AUTO-START) ---
+                // 2. Tombol Optimasi Baterai
                 Surface(
                     onClick = onOptimizeBattery,
                     color = Color.White,
@@ -121,7 +121,9 @@ fun DashboardScreen(
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
-                Text("Halo, Sound Horee!", fontSize = 14.sp, color = Color.Gray)
+
+                // 3. Sapaan Personal
+                Text("Halo, $userName!", fontSize = 14.sp, color = Color.Gray)
                 Text("Ringkasan Penjualan", fontSize = 26.sp, fontWeight = FontWeight.Black)
             }
         }
@@ -132,7 +134,7 @@ fun DashboardScreen(
                 .fillMaxSize(),
             contentPadding = PaddingValues(16.dp)
         ) {
-            // --- 3. TOTAL CARD ---
+            // Card Total
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
@@ -156,7 +158,7 @@ fun DashboardScreen(
                 }
             }
 
-            // --- 4. TRANSACTION LIST ---
+            // List Transaksi
             groupedTransactions.forEach { (date, trxs) ->
                 item {
                     Text(
@@ -167,12 +169,10 @@ fun DashboardScreen(
                         modifier = Modifier.padding(vertical = 12.dp, horizontal = 4.dp)
                     )
                 }
-
                 items(trxs) { trx ->
                     TransactionItem(trx)
                 }
             }
-
             item { Spacer(modifier = Modifier.height(80.dp)) }
         }
     }
@@ -202,9 +202,7 @@ fun TransactionItem(trx: Transaction) {
                     fontWeight = FontWeight.Bold
                 )
             }
-
             Spacer(modifier = Modifier.width(16.dp))
-
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = NotificationParser.getAppName(trx.sourceApp),
@@ -217,7 +215,6 @@ fun TransactionItem(trx: Transaction) {
                     color = Color.Gray
                 )
             }
-
             Column(horizontalAlignment = Alignment.End) {
                 Text(
                     text = "+ ${formatRupiah(trx.amount)}",
