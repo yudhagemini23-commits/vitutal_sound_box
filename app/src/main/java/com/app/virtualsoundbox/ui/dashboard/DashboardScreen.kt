@@ -1,12 +1,15 @@
 package com.app.virtualsoundbox.ui.dashboard
 
-import android.content.Intent
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AddAlert
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,18 +21,23 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.app.virtualsoundbox.MainActivity
 import com.app.virtualsoundbox.data.local.AppDatabase
 import com.app.virtualsoundbox.data.repository.TransactionRepository
 import com.app.virtualsoundbox.model.Transaction
 import com.app.virtualsoundbox.utils.NotificationParser
-
 import java.text.NumberFormat
+import java.text.SimpleDateFormat
 import java.util.Locale
 
 @Composable
-fun DashboardScreen() {
+fun DashboardScreen(
+    isNotificationEnabled: Boolean,      // Parameter 1: Status Izin
+    onOpenNotificationSettings: () -> Unit, // Parameter 2: Aksi buka setting notif
+    onOptimizeBattery: () -> Unit,          // Parameter 3: Aksi optimasi HP China
+) {
     val context = LocalContext.current
+
+    // Inisialisasi ViewModel & Repository
     val db = AppDatabase.getDatabase(context)
     val repository = TransactionRepository(db.transactionDao())
     val factory = DashboardViewModelFactory(repository)
@@ -38,33 +46,77 @@ fun DashboardScreen() {
     val totalToday by viewModel.totalToday.collectAsStateWithLifecycle()
     val transactions by viewModel.transactions.collectAsStateWithLifecycle()
 
+    // Pengelompokan transaksi berdasarkan tanggal
     val groupedTransactions = transactions.groupBy { trx ->
-        java.text.SimpleDateFormat("dd MMM yyyy", Locale("id", "ID")).format(trx.timestamp)
+        SimpleDateFormat("dd MMM yyyy", Locale("id", "ID")).format(trx.timestamp)
     }
 
     Scaffold(
         containerColor = Color(0xFFF8F9FA),
         topBar = {
-            // Tambahkan statusBarsPadding() agar tidak menabrak bagian atas HP
             Column(
                 modifier = Modifier
                     .statusBarsPadding()
                     .padding(horizontal = 16.dp, vertical = 8.dp)
             ) {
+                // --- 1. CARD STATUS IZIN (DINAMIS) ---
                 Surface(
-                    onClick = {
-                        val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
-                        context.startActivity(intent)
-                    },
-                    color = Color(0xFFFFEBEE),
+                    onClick = onOpenNotificationSettings,
+                    color = if (isNotificationEnabled) Color(0xFFE8F5E9) else Color(0xFFFFEBEE),
                     shape = MaterialTheme.shapes.small
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth().padding(8.dp),
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("⚠️ Status Izin Notifikasi", fontSize = 12.sp, color = Color(0xFFC62828), modifier = Modifier.weight(1f))
-                        Text("Cek", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFFC62828))
+                        Icon(
+                            imageVector = Icons.Default.NotificationsActive,
+                            contentDescription = null,
+                            tint = if (isNotificationEnabled) Color(0xFF2E7D32) else Color(0xFFC62828),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (isNotificationEnabled) "Layanan Sound Horee Aktif" else "Izin Notifikasi Belum Aktif",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = if (isNotificationEnabled) Color(0xFF2E7D32) else Color(0xFFC62828),
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            text = if (isNotificationEnabled) "Cek" else "Aktifkan",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isNotificationEnabled) Color(0xFF2E7D32) else Color(0xFFC62828)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // --- 2. CARD OPTIMASI BATERAI (AUTO-START) ---
+                Surface(
+                    onClick = onOptimizeBattery,
+                    color = Color.White,
+                    shape = MaterialTheme.shapes.small,
+                    border = BorderStroke(1.dp, Color(0xFFEEEEEE))
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "🚀 Optimalkan Performa (Auto-Start)",
+                            fontSize = 12.sp,
+                            color = Color.DarkGray,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = null,
+                            tint = Color.Gray,
+                            modifier = Modifier.size(16.dp)
+                        )
                     }
                 }
 
@@ -80,6 +132,7 @@ fun DashboardScreen() {
                 .fillMaxSize(),
             contentPadding = PaddingValues(16.dp)
         ) {
+            // --- 3. TOTAL CARD ---
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
@@ -103,6 +156,7 @@ fun DashboardScreen() {
                 }
             }
 
+            // --- 4. TRANSACTION LIST ---
             groupedTransactions.forEach { (date, trxs) ->
                 item {
                     Text(
@@ -136,11 +190,10 @@ fun TransactionItem(trx: Transaction) {
             modifier = Modifier.padding(16.dp).fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Icon Placeholder (Bisa Mas Yudha ganti logo Bank nantinya)
             Box(
                 modifier = Modifier
                     .size(40.dp)
-                    .background(Color(0xFFF1F8E9), shape = androidx.compose.foundation.shape.CircleShape),
+                    .background(Color(0xFFF1F8E9), shape = CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -172,9 +225,8 @@ fun TransactionItem(trx: Transaction) {
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 15.sp
                 )
-                // Jam Transaksi
                 Text(
-                    text = java.text.SimpleDateFormat("HH:mm", Locale.getDefault()).format(trx.timestamp),
+                    text = SimpleDateFormat("HH:mm", Locale.getDefault()).format(trx.timestamp),
                     fontSize = 11.sp,
                     color = Color.LightGray
                 )

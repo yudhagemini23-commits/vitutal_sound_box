@@ -1,9 +1,19 @@
 package com.app.virtualsoundbox.service
 
+import android.annotation.SuppressLint
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.os.Build
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.speech.tts.TextToSpeech
 import android.util.Log
+import androidx.core.app.NotificationCompat
+import com.app.virtualsoundbox.MainActivity
+import com.app.virtualsoundbox.R
 import com.app.virtualsoundbox.data.local.AppDatabase
 import com.app.virtualsoundbox.data.repository.TransactionRepository
 import com.app.virtualsoundbox.model.Transaction
@@ -19,6 +29,8 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
     private var tts: TextToSpeech? = null
     private var isTtsReady = false
     private val scope = CoroutineScope(Dispatchers.IO)
+    private val CHANNEL_ID = "SoundHoree_Service"
+    private val NOTIF_ID = 99
 
     private val TARGET_APPS by lazy {
         listOf(
@@ -37,6 +49,7 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
         repository = TransactionRepository(db.transactionDao())
         // Inisialisasi TTS dengan mesin Google jika tersedia agar bahasa Indonesia lebih akurat
         tts = TextToSpeech(this, this, "com.google.android.tts")
+        startAsForeground()
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
@@ -121,5 +134,36 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
         tts?.stop()
         tts?.shutdown()
         super.onDestroy()
+    }
+
+
+    @SuppressLint("ForegroundServiceType")
+    private fun startAsForeground() {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Layanan Sound Horee Tetap Aktif",
+                NotificationManager.IMPORTANCE_LOW // Low agar tidak berisik tapi tetap foreground
+            )
+            manager.createNotificationChannel(channel)
+        }
+
+        val notificationIntent = Intent(this, MainActivity::class.java)
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, notificationIntent,
+            PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Sound Horee Aktif")
+            .setContentText("Siap mendengarkan notifikasi uang masuk...")
+            .setSmallIcon(R.drawable.ic_launcher_foreground) // Pakai icon koin emas Mas Yudha
+            .setContentIntent(pendingIntent)
+            .setOngoing(true) // Tidak bisa di-swipe oleh user
+            .build()
+
+        startForeground(NOTIF_ID, notification)
     }
 }
