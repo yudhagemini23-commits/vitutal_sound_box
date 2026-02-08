@@ -47,9 +47,26 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
         super.onCreate()
         val db = AppDatabase.getDatabase(applicationContext)
         repository = TransactionRepository(db.transactionDao())
-        // Inisialisasi TTS dengan mesin Google jika tersedia agar bahasa Indonesia lebih akurat
         tts = TextToSpeech(this, this, "com.google.android.tts")
         startAsForeground()
+    }
+
+    // --- PERUBAHAN DISINI: Agar service tetap hidup (Sticky) ---
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        startAsForeground()
+        return START_STICKY
+    }
+
+    // --- PERUBAHAN DISINI: Memicu restart jika aplikasi di-swipe dari recents ---
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        val restartServiceIntent = Intent(applicationContext, this.javaClass)
+        restartServiceIntent.setPackage(packageName)
+        val restartServicePendingIntent = PendingIntent.getService(
+            applicationContext, 1, restartServiceIntent,
+            PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+        )
+        // Opsional: Jika HP sangat agresif, bisa pakai AlarmManager di sini
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
@@ -76,14 +93,13 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
         val amount = NotificationParser.extractAmount(finalText)
 
         if (amount > 0) {
-            // PEMBERSIHAN PESAN: Agar UI Dashboard tidak berantakan
             val cleanDisplay = finalText
                 .replace(Regex("(?i)android\\.app\\.Notification\\$[a-zA-Z]+"), "")
                 .replace(Regex("(?i)androidx\\.core\\.app\\.[a-zA-Z]+"), "")
                 .replace("$", "")
-                .replace(Regex("\\s+"), " ") // gabungkan spasi ganda
+                .replace(Regex("\\s+"), " ")
                 .trim()
-                .take(60) // Batasi 60 karakter agar pas di satu baris UI
+                .take(60)
 
             val trx = Transaction(
                 sourceApp = pkgName,
@@ -92,8 +108,6 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
             )
 
             scope.launch { repository.saveTransaction(trx) }
-
-            // Contoh suara: "Dana masuk, lima ratus rupiah"
             speak("Dana masuk, ${amount.toInt()} rupiah")
         }
     }
@@ -108,25 +122,15 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            // 1. Coba paksa Bahasa Indonesia
             val localeId = Locale("id", "ID")
             val result = tts?.setLanguage(localeId)
-
             if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                // 2. Jika gagal, coba Locale Indonesia alternatif
                 val altResult = tts?.setLanguage(Locale("in", "ID"))
-
                 if (altResult == TextToSpeech.LANG_MISSING_DATA || altResult == TextToSpeech.LANG_NOT_SUPPORTED) {
-                    // 3. Jika benar-benar tidak ada data suara Indonesia, baru ke English
-                    Log.e("AKD_LISTENER", "Indo Gagal, Fallback ke US English")
                     tts?.setLanguage(Locale.US)
                 }
             }
-
             isTtsReady = true
-            Log.d("AKD_LISTENER", "TTS Status: READY")
-        } else {
-            Log.e("AKD_LISTENER", "Inisialisasi TTS Gagal Total")
         }
     }
 
@@ -136,7 +140,6 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
         super.onDestroy()
     }
 
-
     @SuppressLint("ForegroundServiceType")
     private fun startAsForeground() {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -145,7 +148,7 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Layanan Sound Horee Tetap Aktif",
-                NotificationManager.IMPORTANCE_LOW // Low agar tidak berisik tapi tetap foreground
+                NotificationManager.IMPORTANCE_LOW
             )
             manager.createNotificationChannel(channel)
         }
@@ -159,9 +162,10 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Sound Horee Aktif")
             .setContentText("Siap mendengarkan notifikasi uang masuk...")
-            .setSmallIcon(R.drawable.ic_launcher_foreground) // Pakai icon koin emas Mas Yudha
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentIntent(pendingIntent)
-            .setOngoing(true) // Tidak bisa di-swipe oleh user
+            .setOngoing(true) // Notifikasi tidak bisa di-swipe
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
 
         startForeground(NOTIF_ID, notification)

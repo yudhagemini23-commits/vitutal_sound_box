@@ -24,35 +24,40 @@ import androidx.compose.ui.Modifier
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import com.app.virtualsoundbox.service.NotificationListener // Import Service
 import com.app.virtualsoundbox.ui.dashboard.DashboardScreen
 import com.app.virtualsoundbox.ui.theme.VirtualSoundboxTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Harus paling atas sebelum super.onCreate
         val splashScreen = installSplashScreen()
-
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
         setContent {
             VirtualSoundboxTheme {
-                // State lokal untuk memantau status izin
                 var isNotifEnabled by remember { mutableStateOf(isNotificationServiceEnabled()) }
 
-                // Launcher untuk izin notifikasi (Android 13+)
                 val permissionLauncher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.RequestPermission()
-                ) { isGranted ->
-                    // Mas bisa tambahkan logic toast di sini jika ditolak
-                }
+                ) { /* Handle Result */ }
 
-                // Cek izin saat aplikasi start
                 LaunchedEffect(Unit) {
+                    // Minta izin Post Notif (Android 13+)
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS)
                             != PackageManager.PERMISSION_GRANTED) {
                             permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    }
+
+                    // --- PERUBAHAN DISINI: Jalankan Service secara eksplisit agar persistent ---
+                    if (isNotifEnabled) {
+                        val serviceIntent = Intent(this@MainActivity, NotificationListener::class.java)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            startForegroundService(serviceIntent)
+                        } else {
+                            startService(serviceIntent)
                         }
                     }
                 }
@@ -61,7 +66,6 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    // MENGIRIM PARAMETER KE DASHBOARD
                     DashboardScreen(
                         isNotificationEnabled = isNotifEnabled,
                         onOpenNotificationSettings = {
@@ -76,13 +80,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Fungsi cek status Listener
     private fun isNotificationServiceEnabled(): Boolean {
         val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners")
         return flat?.contains(packageName) == true
     }
 
-    // Fungsi khusus HP China (Xiaomi, Oppo, Vivo)
     private fun requestChinesePhonePermissions(context: Context) {
         val intent = Intent()
         val manufacturer = Build.MANUFACTURER.lowercase()
