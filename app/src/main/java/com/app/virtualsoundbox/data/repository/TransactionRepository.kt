@@ -6,26 +6,18 @@ import kotlinx.coroutines.flow.Flow
 
 class TransactionRepository(private val transactionDao: TransactionDao) {
 
-    // Fungsi Lama
+    // Ambil semua (Default)
     val allTransactions: Flow<List<Transaction>> = transactionDao.getAllTransactions()
+
+    // Ambil berdasarkan Range Tanggal (Untuk Filter Bulan)
+    fun getTransactionsByDateRange(start: Long, end: Long): Flow<List<Transaction>> {
+        return transactionDao.getTransactionsByDateRange(start, end)
+    }
 
     suspend fun insert(transaction: Transaction) {
         transactionDao.insert(transaction)
     }
 
-    // --- FUNGSI BARU (JEMBATAN) ---
-
-    // 1. Ambil transaksi sesuai range tanggal
-    fun getTransactionsByDateRange(start: Long, end: Long): Flow<List<Transaction>> {
-        return transactionDao.getTransactionsByDateRange(start, end)
-    }
-
-    // 2. Ambil total uang sesuai range tanggal
-    fun getTotalAmountByDateRange(start: Long, end: Long): Flow<Double?> {
-        return transactionDao.getTotalAmountByDateRange(start, end)
-    }
-
-    // 3. Hapus transaksi
     suspend fun deleteTransaction(transaction: Transaction) {
         transactionDao.deleteTransaction(transaction)
     }

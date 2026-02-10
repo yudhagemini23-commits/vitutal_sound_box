@@ -5,63 +5,98 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.app.virtualsoundbox.data.repository.TransactionRepository
 import com.app.virtualsoundbox.model.Transaction
-import com.app.virtualsoundbox.utils.DateFilter
-import com.app.virtualsoundbox.utils.DateUtils
-import com.app.virtualsoundbox.utils.NotificationParser
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 
 class DashboardViewModel(private val repository: TransactionRepository) : ViewModel() {
 
-    // 1. State Filter (Default: Hari Ini)
-    private val _selectedFilter = MutableStateFlow(DateFilter.TODAY)
-    val selectedFilter: StateFlow<DateFilter> = _selectedFilter.asStateFlow()
+    // State untuk Rentang Waktu (Start & End Timestamp)
+    // Default: Hari Ini (00:00 - 23:59)
+    private val _dateRange = MutableStateFlow(getTodayRange())
 
-    // 2. Transaksi (Berubah sesuai Filter)
+    // State Label Filter (untuk Judul Card) -> "Hari Ini", "Bulan Ini", atau "01 Feb - 28 Feb"
+    private val _filterLabel = MutableStateFlow("Hari Ini")
+    val filterLabel: StateFlow<String> = _filterLabel.asStateFlow()
+
+    // Ambil Data Berdasarkan Range Waktu
     @OptIn(ExperimentalCoroutinesApi::class)
-    val transactions: StateFlow<List<Transaction>> = _selectedFilter
-        .flatMapLatest { filter ->
-            val (start, end) = DateUtils.getRange(filter)
-            // PERBAIKAN: Panggil fungsi repo, bukan dao langsung
+    val transactions: StateFlow<List<Transaction>> = _dateRange
+        .flatMapLatest { (start, end) ->
             repository.getTransactionsByDateRange(start, end)
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // 3. Total Uang (Berubah sesuai Filter)
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val totalAmount: StateFlow<Double> = _selectedFilter
-        .flatMapLatest { filter ->
-            val (start, end) = DateUtils.getRange(filter)
-            // PERBAIKAN: Panggil fungsi repo, bukan dao langsung
-            repository.getTotalAmountByDateRange(start, end)
-        }
-        .map { it ?: 0.0 }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+    // Hitung Total dari Data yang Tampil
+    val totalIncome: StateFlow<Double> = transactions.map { list ->
+        list.sumOf { it.amount }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
 
-    // 4. Data Statistik untuk Pie Chart
-    val appStats: StateFlow<Map<String, Float>> = transactions.map { list ->
-        if (list.isEmpty()) return@map emptyMap()
+    // --- LOGIC FILTER ---
 
-        val total = list.sumOf { it.amount }.toFloat()
-        list.groupBy { NotificationParser.getAppName(it.sourceApp) }
-            .mapValues { entry ->
-                val appTotal = entry.value.sumOf { it.amount }.toFloat()
-                (appTotal / total) * 100f // Hitung Persentase
-            }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
-
-    // Fungsi Ganti Filter
-    fun setFilter(filter: DateFilter) {
-        _selectedFilter.value = filter
+    fun setFilterToday() {
+        _dateRange.value = getTodayRange()
+        _filterLabel.value = "Hari Ini"
     }
 
-    // Fungsi Hapus Transaksi
-    fun deleteTransaction(transaction: Transaction) {
-        viewModelScope.launch {
-            // PERBAIKAN: Panggil fungsi repo, bukan dao langsung
-            repository.deleteTransaction(transaction)
-        }
+    fun setFilterThisMonth() {
+        _dateRange.value = getMonthRange(Calendar.getInstance())
+        _filterLabel.value = "Bulan Ini"
+    }
+
+    // Custom Date (Misal dari DatePicker)
+    fun setFilterCustom(startMillis: Long, endMillis: Long?) {
+        val end = endMillis ?: startMillis // Kalau cuma pilih 1 tanggal
+
+        // Atur jam ke 00:00 dan 23:59
+        val calendar = Calendar.getInstance()
+
+        calendar.timeInMillis = startMillis
+        calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        val finalStart = calendar.timeInMillis
+
+        calendar.timeInMillis = end
+        calendar.set(Calendar.HOUR_OF_DAY, 23)
+        calendar.set(Calendar.MINUTE, 59)
+        val finalEnd = calendar.timeInMillis
+
+        _dateRange.value = Pair(finalStart, finalEnd)
+
+        val dateFormat = SimpleDateFormat("dd MMM", Locale("id", "ID"))
+        _filterLabel.value = "${dateFormat.format(Date(finalStart))} - ${dateFormat.format(Date(finalEnd))}"
+    }
+
+    // --- HELPER DATE ---
+    private fun getTodayRange(): Pair<Long, Long> {
+        val calendar = Calendar.getInstance()
+        calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        val start = calendar.timeInMillis
+
+        calendar.set(Calendar.HOUR_OF_DAY, 23)
+        calendar.set(Calendar.MINUTE, 59)
+        calendar.set(Calendar.SECOND, 59)
+        val end = calendar.timeInMillis
+        return Pair(start, end)
+    }
+
+    private fun getMonthRange(cal: Calendar): Pair<Long, Long> {
+        val startCal = cal.clone() as Calendar
+        startCal.set(Calendar.DAY_OF_MONTH, 1)
+        startCal.set(Calendar.HOUR_OF_DAY, 0)
+        startCal.set(Calendar.MINUTE, 0)
+
+        val endCal = cal.clone() as Calendar
+        endCal.set(Calendar.DAY_OF_MONTH, endCal.getActualMaximum(Calendar.DAY_OF_MONTH))
+        endCal.set(Calendar.HOUR_OF_DAY, 23)
+        endCal.set(Calendar.MINUTE, 59)
+
+        return Pair(startCal.timeInMillis, endCal.timeInMillis)
     }
 }
 

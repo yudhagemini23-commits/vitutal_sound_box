@@ -1,6 +1,8 @@
 package com.app.virtualsoundbox.ui.profile
 
+import android.content.Context
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
@@ -24,31 +26,33 @@ import com.app.virtualsoundbox.data.local.AppDatabase
 import com.app.virtualsoundbox.model.UserProfile
 import com.google.firebase.auth.ktx.auth
 import com.google.firebase.ktx.Firebase
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileSetupScreen(
+    // PERBAIKAN DI SINI: Sekarang menerima String (storeName)
     onProfileSaved: (String) -> Unit
 ) {
     val context = LocalContext.current
-    val auth = Firebase.auth
+    val scope = rememberCoroutineScope()
+
+    // 1. Ambil Data dari SharedPreferences (Data dari Login Screen sebelumnya)
+    val sharedPref = context.getSharedPreferences("SoundHoreePrefs", Context.MODE_PRIVATE)
+    val existingName = sharedPref.getString("userName", "") ?: ""
 
     // Inisialisasi Database Local
     val db = AppDatabase.getDatabase(context)
     val userProfileDao = db.userProfileDao()
 
     // State Form
-    var storeName by remember { mutableStateOf("") }
+    var storeName by remember { mutableStateOf(existingName) }
     var phoneNumber by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
-
-    // Scope untuk operasi database background
-    val scope = rememberCoroutineScope()
 
     val categories = listOf(
         "Kuliner (Makanan/Minuman)",
@@ -75,11 +79,24 @@ fun ProfileSetupScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Text(
-                "Data disimpan secara lokal di perangkat Anda.",
-                color = Color.Gray,
-                fontSize = 14.sp
-            )
+            // Informasi
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFE3F2FD)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Halo, Juragan $existingName! Silakan lengkapi detail berikut agar struk dan laporan lebih rapi.",
+                        fontSize = 14.sp,
+                        color = Color(0xFF0D47A1)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
 
             // 1. Input Nama Toko
             OutlinedTextField(
@@ -107,7 +124,8 @@ fun ProfileSetupScreen(
             Text("Kategori Bisnis", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color.White),
-                elevation = CardDefaults.cardElevation(1.dp)
+                elevation = CardDefaults.cardElevation(1.dp),
+                border = BorderStroke(1.dp, Color(0xFFEEEEEE))
             ) {
                 Column {
                     categories.forEach { category ->
@@ -123,30 +141,34 @@ fun ProfileSetupScreen(
                         ) {
                             RadioButton(
                                 selected = (selectedCategory == category),
-                                onClick = null
+                                onClick = null,
+                                colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF2E7D32))
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(text = category, fontSize = 14.sp)
                         }
-                        Divider(color = Color(0xFFEEEEEE))
+                        if (category != categories.last()) {
+                            Divider(color = Color(0xFFF5F5F5))
+                        }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
-            // 4. Tombol Simpan (KE DATABASE LOKAL)
+            // 4. Tombol Simpan
             Button(
                 onClick = {
                     if (storeName.isBlank() || phoneNumber.isBlank() || selectedCategory.isBlank()) {
                         Toast.makeText(context, "Mohon lengkapi semua data!", Toast.LENGTH_SHORT).show()
                     } else {
                         isLoading = true
-                        val currentUser = auth.currentUser
-                        val uid = currentUser?.uid ?: return@Button
-                        val email = currentUser.email ?: ""
 
-                        // Object UserProfile untuk disimpan ke Room
+                        val currentUser = Firebase.auth.currentUser
+                        val uid = currentUser?.uid ?: UUID.randomUUID().toString()
+                        val email = currentUser?.email ?: "local_user@soundhoree.app"
+
+                        // Object UserProfile
                         val newProfile = UserProfile(
                             uid = uid,
                             email = email,
@@ -154,29 +176,36 @@ fun ProfileSetupScreen(
                             phoneNumber = phoneNumber,
                             category = selectedCategory,
                             joinedAt = System.currentTimeMillis(),
-                            isSynced = false // Tandai belum sync ke server Golang
+                            isSynced = false
                         )
 
-                        // Simpan ke Room Database (Background Thread)
+                        // Simpan ke Room Database
                         scope.launch {
-                            withContext(Dispatchers.IO) {
-                                userProfileDao.insert(newProfile)
-                            }
+                            try {
+                                withContext(Dispatchers.IO) {
+                                    userProfileDao.insert(newProfile)
+                                }
+                                Toast.makeText(context, "Profil Berhasil Disimpan!", Toast.LENGTH_SHORT).show()
 
-                            // Kembali ke UI Thread
-                            isLoading = false
-                            onProfileSaved(storeName) // Lanjut ke Dashboard
+                                // PERBAIKAN DI SINI: Kirim nama toko ke MainActivity
+                                onProfileSaved(storeName)
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Gagal menyimpan: ${e.message}", Toast.LENGTH_SHORT).show()
+                            } finally {
+                                isLoading = false
+                            }
                         }
                     }
                 },
-                modifier = Modifier.fillMaxWidth().height(50.dp),
+                modifier = Modifier.fillMaxWidth().height(56.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                shape = MaterialTheme.shapes.medium,
                 enabled = !isLoading
             ) {
                 if (isLoading) {
                     CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp))
                 } else {
-                    Text("Simpan & Masuk", fontWeight = FontWeight.Bold)
+                    Text("Simpan & Lanjutkan", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.width(8.dp))
                     Icon(Icons.Default.Check, null)
                 }

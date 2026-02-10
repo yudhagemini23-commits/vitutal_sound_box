@@ -1,7 +1,8 @@
 package com.app.virtualsoundbox.ui.dashboard
 
+import android.app.DatePickerDialog
+import android.widget.DatePicker
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -9,13 +10,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountCircle
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.NotificationsActive
-import androidx.compose.material.icons.filled.RocketLaunch
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,7 +20,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -31,10 +27,13 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.app.virtualsoundbox.data.local.AppDatabase
 import com.app.virtualsoundbox.data.repository.TransactionRepository
 import com.app.virtualsoundbox.model.Transaction
-import com.app.virtualsoundbox.utils.DateFilter
+import com.app.virtualsoundbox.model.UserProfile
 import com.app.virtualsoundbox.utils.NotificationParser
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -44,323 +43,282 @@ fun DashboardScreen(
     isNotificationEnabled: Boolean,
     onOpenNotificationSettings: () -> Unit,
     onOptimizeBattery: () -> Unit,
-    onLogout: () -> Unit // Parameter Baru: Aksi Logout/Ganti Nama
+    onLogout: () -> Unit
 ) {
     val context = LocalContext.current
+
+    // Setup DB & ViewModel
     val db = AppDatabase.getDatabase(context)
     val repository = TransactionRepository(db.transactionDao())
     val factory = DashboardViewModelFactory(repository)
     val viewModel: DashboardViewModel = viewModel(factory = factory)
 
-    // Collect States
-    val selectedFilter by viewModel.selectedFilter.collectAsStateWithLifecycle()
-    val totalAmount by viewModel.totalAmount.collectAsStateWithLifecycle()
+    // States Data
+    val totalIncome by viewModel.totalIncome.collectAsStateWithLifecycle()
     val transactions by viewModel.transactions.collectAsStateWithLifecycle()
-    val appStats by viewModel.appStats.collectAsStateWithLifecycle()
+    val filterLabel by viewModel.filterLabel.collectAsStateWithLifecycle()
 
-    // State untuk Dialog Profil
+    // State UI Lokal
+    var selectedFilterIndex by remember { mutableStateOf(0) } // 0=Hari Ini, 1=Bulan Ini, 2=Custom
+
+    // State Profil Toko
+    var userProfile by remember { mutableStateOf<UserProfile?>(null) }
     var showProfileDialog by remember { mutableStateOf(false) }
 
-    // --- DIALOG PROFIL ---
-    if (showProfileDialog) {
-        AlertDialog(
-            onDismissRequest = { showProfileDialog = false },
-            icon = {
-                Icon(
-                    imageVector = Icons.Default.AccountCircle,
-                    contentDescription = null,
-                    modifier = Modifier.size(64.dp),
-                    tint = Color(0xFF2E7D32)
-                )
-            },
-            title = {
-                Text("Profil Juragan", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-            },
-            text = {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(userName, fontSize = 22.sp, fontWeight = FontWeight.Medium)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text("Pemilik Toko / Admin", fontSize = 14.sp, color = Color.Gray)
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Divider()
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        "Sound Horee v1.0",
-                        fontSize = 12.sp,
-                        color = Color.LightGray
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showProfileDialog = false }) {
-                    Text("Tutup", fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        showProfileDialog = false
-                        onLogout() // Panggil aksi logout
-                    },
-                    colors = ButtonDefaults.textButtonColors(contentColor = Color.Red)
-                ) {
-                    Text("Ganti Nama / Keluar")
-                }
-            },
-            containerColor = Color.White
-        )
+    // Date Picker Dialog
+    val calendar = Calendar.getInstance()
+    val datePickerDialog = DatePickerDialog(
+        context,
+        { _: DatePicker, year: Int, month: Int, dayOfMonth: Int ->
+            val selectedCal = Calendar.getInstance()
+            selectedCal.set(year, month, dayOfMonth)
+            viewModel.setFilterCustom(selectedCal.timeInMillis, null)
+            selectedFilterIndex = 2 // Set aktif ke Custom
+        },
+        calendar.get(Calendar.YEAR),
+        calendar.get(Calendar.MONTH),
+        calendar.get(Calendar.DAY_OF_MONTH)
+    )
+    datePickerDialog.datePicker.maxDate = System.currentTimeMillis()
+
+    // Load Profil
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            val profiles = db.userProfileDao().getAllProfiles()
+            if (profiles.isNotEmpty()) userProfile = profiles.last()
+        }
+    }
+
+    val displayName = userProfile?.storeName ?: userName
+    val displayCategory = userProfile?.category ?: "UMKM Indonesia"
+
+    // Grouping Transaksi
+    val groupedTransactions = transactions.groupBy { trx ->
+        SimpleDateFormat("dd MMM yyyy", Locale("id", "ID")).format(trx.timestamp)
     }
 
     Scaffold(
         containerColor = Color(0xFFF8F9FA),
         topBar = {
-            Column(modifier = Modifier.statusBarsPadding()) {
-                // Header Nama & Profile
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+            TopAppBar(
+                title = {
                     Column {
-                        Text("Halo, $userName!", fontSize = 14.sp, color = Color.Gray)
-                        Text("Ringkasan", fontSize = 24.sp, fontWeight = FontWeight.Black)
+                        Text(displayName, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        Text(displayCategory, fontSize = 12.sp, color = Color.Gray)
                     }
-                    // TOMBOL PROFILE (Ganti dari Settings)
+                },
+                actions = {
                     IconButton(onClick = { showProfileDialog = true }) {
-                        Icon(
-                            Icons.Default.AccountCircle,
-                            contentDescription = "Profil",
-                            modifier = Modifier.size(32.dp),
-                            tint = Color(0xFF2E7D32)
-                        )
+                        Surface(shape = CircleShape, color = Color(0xFFE8F5E9), modifier = Modifier.size(40.dp)) {
+                            Icon(Icons.Default.Store, "Profile", tint = Color(0xFF2E7D32), modifier = Modifier.padding(8.dp))
+                        }
                     }
-                }
-
-                // Filter Tanggal
-                Row(
-                    modifier = Modifier
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    DateFilter.values().forEach { filter ->
-                        FilterChip(
-                            selected = (filter == selectedFilter),
-                            onClick = { viewModel.setFilter(filter) },
-                            label = { Text(filter.label) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = Color(0xFFE8F5E9),
-                                selectedLabelColor = Color(0xFF2E7D32)
-                            ),
-                            border = FilterChipDefaults.filterChipBorder(
-                                enabled = true,
-                                selected = (filter == selectedFilter),
-                                borderColor = if (filter == selectedFilter) Color(0xFF2E7D32) else Color.LightGray
-                            )
-                        )
-                    }
-                }
-            }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.White)
+            )
         }
     ) { padding ->
         LazyColumn(
             modifier = Modifier.padding(padding).fillMaxSize(),
             contentPadding = PaddingValues(16.dp)
         ) {
-
-            // --- BAGIAN 1: STATUS PERMISSION ---
+            // 1. STATUS CARDS (DIKEMBALIKAN SESUAI PERMINTAAN)
+            // Selalu tampil untuk memberi info apakah service aktif atau mati
             item {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    PermissionStatusCard(
-                        isActive = isNotificationEnabled,
-                        activeText = "Layanan Suara Aktif",
-                        inactiveText = "Izin Notifikasi Mati",
-                        activeIcon = Icons.Default.CheckCircle,
-                        inactiveIcon = Icons.Default.NotificationsActive,
-                        onClick = onOpenNotificationSettings
-                    )
+                StatusCard(
+                    isEnabled = isNotificationEnabled,
+                    onClick = onOpenNotificationSettings
+                )
+                Spacer(modifier = Modifier.height(8.dp))
 
-                    Surface(
-                        onClick = onOptimizeBattery,
-                        color = Color.White,
-                        shape = MaterialTheme.shapes.medium,
-                        border = BorderStroke(1.dp, Color(0xFFEEEEEE)),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Default.RocketLaunch, contentDescription = null, tint = Color(0xFFFFA000))
-                            Spacer(Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Optimalkan Performa", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                Text("Klik jika suara sering telat/mati (Xiaomi/Oppo)", fontSize = 11.sp, color = Color.Gray)
-                            }
-                            // Icon panah kecil
-                        }
-                    }
-                }
-                Spacer(modifier = Modifier.height(16.dp))
+                BatteryOptimizationCard(onClick = onOptimizeBattery)
+                Spacer(modifier = Modifier.height(24.dp))
             }
 
-            // --- BAGIAN 2: CARD TOTAL ---
+            // 2. FILTER CHIPS
             item {
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-                    shape = MaterialTheme.shapes.extraLarge,
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF2E7D32)),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Column(modifier = Modifier.padding(24.dp)) {
-                        Text("Total ${selectedFilter.label}", color = Color.White.copy(alpha = 0.8f), fontSize = 14.sp)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(formatRupiah(totalAmount), color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Black)
+                    FilterChipUI("Hari Ini", selectedFilterIndex == 0) {
+                        selectedFilterIndex = 0
+                        viewModel.setFilterToday()
+                    }
+                    FilterChipUI("Bulan Ini", selectedFilterIndex == 1) {
+                        selectedFilterIndex = 1
+                        viewModel.setFilterThisMonth()
+                    }
+                    FilterChipUI("📅 Pilih Tanggal", selectedFilterIndex == 2) {
+                        datePickerDialog.show()
                     }
                 }
             }
 
-            // --- BAGIAN 3: PIE CHART ---
+            // 3. BIG BALANCE CARD
             item {
-                if (appStats.isNotEmpty()) {
-                    Card(
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        elevation = CardDefaults.cardElevation(1.dp)
-                    ) {
-                        SimplePieChart(appStats)
-                    }
-                }
+                TotalBalanceCard(totalAmount = totalIncome, label = "Total Masuk ($filterLabel)")
+                Spacer(modifier = Modifier.height(24.dp))
             }
 
-            // --- BAGIAN 4: LIST TRANSAKSI ---
-            if (transactions.isEmpty()) {
+            // 4. LIST TRANSAKSI
+            if (groupedTransactions.isEmpty()) {
                 item {
-                    Box(modifier = Modifier.fillMaxWidth().height(100.dp), contentAlignment = Alignment.Center) {
-                        Text("Belum ada transaksi masuk", color = Color.Gray, fontSize = 14.sp)
-                    }
+                    EmptyStateView(filterLabel)
                 }
             } else {
-                items(
-                    items = transactions,
-                    key = { it.id }
-                ) { trx ->
-                    val dismissState = rememberSwipeToDismissBoxState(
-                        confirmValueChange = {
-                            if (it == SwipeToDismissBoxValue.EndToStart) {
-                                viewModel.deleteTransaction(trx)
-                                true
-                            } else false
-                        }
-                    )
-
-                    SwipeToDismissBox(
-                        state = dismissState,
-                        backgroundContent = {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(Color(0xFFEF5350), MaterialTheme.shapes.medium)
-                                    .padding(horizontal = 20.dp),
-                                contentAlignment = Alignment.CenterEnd
-                            ) {
-                                Icon(Icons.Default.Delete, contentDescription = "Hapus", tint = Color.White)
-                            }
-                        },
-                        content = {
-                            TransactionItem(trx)
-                        }
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
+                groupedTransactions.forEach { (date, trxs) ->
+                    item {
+                        Text(
+                            text = date,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.Gray,
+                            modifier = Modifier.padding(vertical = 12.dp, horizontal = 4.dp)
+                        )
+                    }
+                    items(trxs) { trx -> TransactionItem(trx) }
                 }
             }
-            item { Spacer(modifier = Modifier.height(50.dp)) }
+            item { Spacer(modifier = Modifier.height(80.dp)) }
+        }
+
+        if (showProfileDialog) {
+            ProfileDetailDialog(userProfile, userName, { showProfileDialog = false }, { showProfileDialog = false; onLogout() })
         }
     }
 }
 
-// --- KOMPONEN HELPER (Sama seperti sebelumnya) ---
+// --- KOMPONEN UI ---
 
 @Composable
-fun PermissionStatusCard(
-    isActive: Boolean,
-    activeText: String,
-    inactiveText: String,
-    activeIcon: androidx.compose.ui.graphics.vector.ImageVector,
-    inactiveIcon: androidx.compose.ui.graphics.vector.ImageVector,
-    onClick: () -> Unit
-) {
+fun StatusCard(isEnabled: Boolean, onClick: () -> Unit) {
+    // Logic Warna: Hijau jika Aktif, Merah jika Mati
+    val backgroundColor = if (isEnabled) Color(0xFFE8F5E9) else Color(0xFFFFEBEE)
+    val contentColor = if (isEnabled) Color(0xFF2E7D32) else Color(0xFFC62828)
+    val icon = if (isEnabled) Icons.Default.NotificationsActive else Icons.Default.NotificationsOff
+
     Surface(
         onClick = onClick,
-        color = if (isActive) Color(0xFFE8F5E9) else Color(0xFFFFEBEE),
-        shape = MaterialTheme.shapes.medium,
-        border = BorderStroke(1.dp, if (isActive) Color(0xFFA5D6A7) else Color(0xFFFFCDD2)),
-        modifier = Modifier.fillMaxWidth()
+        color = backgroundColor,
+        shape = MaterialTheme.shapes.medium
     ) {
         Row(
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(
-                imageVector = if (isActive) activeIcon else inactiveIcon,
+                imageVector = icon,
                 contentDescription = null,
-                tint = if (isActive) Color(0xFF2E7D32) else Color(0xFFC62828)
+                tint = contentColor,
+                modifier = Modifier.size(24.dp)
             )
-            Spacer(Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = if (isActive) activeText else inactiveText,
-                    fontWeight = FontWeight.Bold,
+                    text = if (isEnabled) "Sound Horee Aktif" else "Izin Notifikasi Mati",
                     fontSize = 14.sp,
-                    color = if (isActive) Color(0xFF2E7D32) else Color(0xFFC62828)
+                    fontWeight = FontWeight.Bold,
+                    color = contentColor
                 )
-                if (!isActive) {
-                    Text("Klik untuk mengaktifkan sekarang!", fontSize = 11.sp, color = Color(0xFFC62828))
-                }
+                Text(
+                    text = if (isEnabled) "Siap mendeteksi uang masuk" else "Klik untuk mengaktifkan izin",
+                    fontSize = 12.sp,
+                    color = contentColor.copy(alpha = 0.8f)
+                )
             }
-            if (!isActive) {
-                Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFC62828), modifier = Modifier.size(16.dp))
-            }
+            // Indikator teks di sebelah kanan
+            Text(
+                text = if (isEnabled) "CEK" else "AKTIFKAN",
+                fontWeight = FontWeight.Bold,
+                fontSize = 12.sp,
+                color = contentColor
+            )
         }
     }
 }
 
 @Composable
-fun SimplePieChart(stats: Map<String, Float>) {
-    val colors = listOf(Color(0xFF2E7D32), Color(0xFFFFA000), Color(0xFF1976D2), Color(0xFFC62828), Color.Gray)
+fun FilterChipUI(label: String, isSelected: Boolean, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        color = if (isSelected) Color(0xFF2E7D32) else Color.White,
+        border = if (isSelected) null else BorderStroke(1.dp, Color(0xFFE0E0E0)),
+        shape = RoundedCornerShape(20.dp),
+        shadowElevation = if (isSelected) 4.dp else 0.dp
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            color = if (isSelected) Color.White else Color.Gray,
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+            fontSize = 13.sp
+        )
+    }
+}
 
-    Column(modifier = Modifier.padding(16.dp)) {
-        Text("Komposisi Sumber Dana", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.Gray)
+@Composable
+fun TotalBalanceCard(totalAmount: Double?, label: String) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.extraLarge,
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF2E7D32)),
+        elevation = CardDefaults.cardElevation(8.dp)
+    ) {
+        Column(modifier = Modifier.padding(24.dp).fillMaxWidth()) {
+            Text(label, color = Color.White.copy(alpha = 0.8f), fontSize = 13.sp)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = formatRupiah(totalAmount),
+                color = Color.White,
+                fontSize = 32.sp,
+                fontWeight = FontWeight.Black
+            )
+        }
+    }
+}
+
+@Composable
+fun EmptyStateView(filterLabel: String) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(top = 40.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(Icons.Default.History, null, tint = Color.LightGray, modifier = Modifier.size(50.dp))
         Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = "Tidak ada data transaksi",
+            fontWeight = FontWeight.Bold,
+            color = Color.Gray
+        )
+        Text(
+            text = "Pada periode $filterLabel",
+            fontSize = 12.sp,
+            color = Color.LightGray
+        )
+    }
+}
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(modifier = Modifier.size(100.dp)) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    var startAngle = -90f
-                    stats.entries.forEachIndexed { index, entry ->
-                        val sweepAngle = (entry.value / 100f) * 360f
-                        drawArc(
-                            color = colors[index % colors.size],
-                            startAngle = startAngle,
-                            sweepAngle = sweepAngle,
-                            useCenter = true
-                        )
-                        startAngle += sweepAngle
-                    }
-                }
-            }
-            Spacer(modifier = Modifier.width(24.dp))
-            Column {
-                stats.entries.forEachIndexed { index, entry ->
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 4.dp)) {
-                        Box(modifier = Modifier.size(12.dp).background(colors[index % colors.size], CircleShape))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("${entry.key}: ${"%.1f".format(entry.value)}%", fontSize = 12.sp)
-                    }
-                }
+@Composable
+fun BatteryOptimizationCard(onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        color = Color.White,
+        shape = MaterialTheme.shapes.medium,
+        border = BorderStroke(1.dp, Color(0xFFEEEEEE))
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.Settings, null, tint = Color.Gray, modifier = Modifier.size(24.dp))
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Optimalkan Performa", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color.DarkGray)
+                Text("Aktifkan auto-start agar suara lancar", fontSize = 12.sp, color = Color.Gray)
             }
         }
     }
@@ -368,47 +326,51 @@ fun SimplePieChart(stats: Map<String, Float>) {
 
 @Composable
 fun TransactionItem(trx: Transaction) {
-    Surface(
-        shape = MaterialTheme.shapes.medium,
-        color = Color.White,
-        shadowElevation = 1.dp
-    ) {
-        Row(
-            modifier = Modifier.padding(16.dp).fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .background(Color(0xFFF1F8E9), shape = CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = NotificationParser.getAppName(trx.sourceApp).take(1),
-                    color = Color(0xFF2E7D32),
-                    fontWeight = FontWeight.Bold
-                )
+    Surface(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), shape = MaterialTheme.shapes.large, color = Color.White, shadowElevation = 1.dp) {
+        Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.size(40.dp).background(Color(0xFFF1F8E9), CircleShape), contentAlignment = Alignment.Center) {
+                Text(NotificationParser.getAppName(trx.sourceApp).take(1), color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold)
             }
             Spacer(modifier = Modifier.width(16.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(NotificationParser.getAppName(trx.sourceApp), fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                Text(
-                    text = SimpleDateFormat("dd MMM, HH:mm", Locale.getDefault()).format(trx.timestamp),
-                    fontSize = 12.sp,
-                    color = Color.Gray
-                )
+                Text(trx.rawMessage.take(35).let { if (it.length >= 35) "$it..." else it }, fontSize = 12.sp, color = Color.Gray)
             }
-            Text(
-                text = "+ ${formatRupiah(trx.amount)}",
-                color = Color(0xFF2E7D32),
-                fontWeight = FontWeight.Bold,
-                fontSize = 15.sp
-            )
+            Column(horizontalAlignment = Alignment.End) {
+                Text("+ ${formatRupiah(trx.amount)}", color = Color(0xFF2E7D32), fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
+                Text(SimpleDateFormat("HH:mm", Locale.getDefault()).format(trx.timestamp), fontSize = 11.sp, color = Color.LightGray)
+            }
         }
+    }
+}
+
+@Composable
+fun ProfileDetailDialog(profile: UserProfile?, defaultName: String, onDismiss: () -> Unit, onLogout: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color.White,
+        title = { Text("Profil Toko", fontWeight = FontWeight.Bold) },
+        text = {
+            Column {
+                ProfileRow(Icons.Default.Store, "Nama Toko", profile?.storeName ?: defaultName)
+                ProfileRow(Icons.Default.Phone, "WhatsApp", profile?.phoneNumber ?: "-")
+            }
+        },
+        confirmButton = { Button(onClick = onLogout, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFEBEE), contentColor = Color(0xFFC62828))) { Text("Keluar") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Tutup") } }
+    )
+}
+
+@Composable
+fun ProfileRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, value: String) {
+    Row(modifier = Modifier.padding(vertical = 4.dp)) {
+        Icon(icon, null, tint = Color.Gray, modifier = Modifier.size(16.dp))
+        Spacer(modifier = Modifier.width(8.dp))
+        Column { Text(label, fontSize = 10.sp, color = Color.Gray); Text(value, fontSize = 14.sp) }
     }
 }
 
 fun formatRupiah(number: Double?): String {
     val format = NumberFormat.getCurrencyInstance(Locale("id", "ID"))
-    return format.format(number ?: 0.0)
+    return format.format(number ?: 0.0).replace("Rp", "Rp ")
 }

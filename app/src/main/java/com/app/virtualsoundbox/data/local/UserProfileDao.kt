@@ -18,4 +18,8 @@ interface UserProfileDao {
     // Nanti dipakai buat cari data yang belum di-sync ke server
     @Query("SELECT * FROM user_profile WHERE isSynced = 0")
     suspend fun getUnsyncedProfiles(): List<UserProfile>
+
+    // Fungsi untuk mengambil semua data profil yang tersimpan di HP
+    @Query("SELECT * FROM user_profile ORDER BY joinedAt DESC LIMIT 1")
+    fun getAllProfiles(): List<UserProfile>
 }

@@ -14,6 +14,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "757607146689-1nphcap8899t12ljskf8vej8l2cs0nhr.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.app.virtualsoundbox",
+            "certificate_hash": "3a6cd335522a017ef07175c6185c2efb6f577a58"
+          }
+        },
+        {
           "client_id": "757607146689-a0b5jg7al211aq9ohhdkpeabrbhdmj9g.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
