@@ -9,10 +9,12 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
@@ -25,17 +27,34 @@ import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.lifecycleScope
+
 import com.app.virtualsoundbox.service.NotificationListener
+import com.app.virtualsoundbox.ui.auth.GoogleAuthClient
 import com.app.virtualsoundbox.ui.dashboard.DashboardScreen
 import com.app.virtualsoundbox.ui.login.LoginScreen
+import com.app.virtualsoundbox.ui.login.SignInState
 import com.app.virtualsoundbox.ui.onboarding.OnboardingScreen
 import com.app.virtualsoundbox.ui.theme.VirtualSoundboxTheme
+import kotlinx.coroutines.launch
+import com.google.firebase.FirebaseApp
 
 class MainActivity : ComponentActivity() {
+
+    // 1. Inisialisasi Google Auth Client
+    private val googleAuthUiClient by lazy {
+        GoogleAuthClient(applicationContext)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
+
+        // --- TAMBAHAN PENTING: Fix Error "Default FirebaseApp is not initialized" ---
+        // Ini wajib dipanggil sebelum kode lain jalan agar Firebase bangun.
+        FirebaseApp.initializeApp(this)
+        // ---------------------------------------------------------------------------
+
         enableEdgeToEdge()
 
         val sharedPref = getSharedPreferences("SoundHoreePrefs", Context.MODE_PRIVATE)
@@ -43,17 +62,22 @@ class MainActivity : ComponentActivity() {
         setContent {
             VirtualSoundboxTheme {
                 val lifecycleOwner = LocalLifecycleOwner.current
+                val scope = rememberCoroutineScope()
 
-                // States
+                // --- STATES ---
                 var isNotifEnabled by remember { mutableStateOf(isNotificationServiceEnabled()) }
                 var showOnboarding by rememberSaveable {
                     mutableStateOf(sharedPref.getBoolean("isFirstRun", true))
                 }
-                var userName by remember {
-                    mutableStateOf(sharedPref.getString("userName", null))
-                }
 
-                // Observer Lifecycle
+                // State Login Google
+                var state by remember { mutableStateOf(SignInState()) }
+
+                // Cek User yang sedang login (Dari Firebase)
+                // Kode ini aman dijalankan sekarang karena FirebaseApp sudah di-init di atas
+                var userData by remember { mutableStateOf(googleAuthUiClient.getSignedInUser()) }
+
+                // --- LIFECYCLE OBSERVER ---
                 DisposableEffect(lifecycleOwner) {
                     val observer = LifecycleEventObserver { _, event ->
                         if (event == Lifecycle.Event.ON_RESUME) {
@@ -64,28 +88,72 @@ class MainActivity : ComponentActivity() {
                     onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
                 }
 
+                // --- PERMISSION LAUNCHER ---
                 val permissionLauncher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.RequestPermission()
                 ) { /* Handle Result */ }
 
-                // Side Effect Service
-                LaunchedEffect(isNotifEnabled, showOnboarding, userName) {
+                // --- GOOGLE SIGN IN LAUNCHER ---
+                val launcher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.StartIntentSenderForResult(),
+                    onResult = { result ->
+                        if (result.resultCode == RESULT_OK) {
+                            lifecycleScope.launch {
+                                val signInResult = googleAuthUiClient.signInWithIntent(
+                                    intent = result.data ?: return@launch
+                                )
+                                // Handle Hasil Login
+                                val user = signInResult.data
+                                val error = signInResult.errorMessage
+
+                                state = state.copy(
+                                    isSuccess = user != null,
+                                    signInError = error,
+                                    isLoading = false
+                                )
+
+                                if (user != null) {
+                                    userData = user
+                                    // Simpan ke SharedPref sebagai Backup (Untuk Service)
+                                    with(sharedPref.edit()) {
+                                        putString("userName", user.userName)
+                                        putString("userEmail", user.email)
+                                        putString("userId", user.userId)
+                                        apply()
+                                    }
+                                    Toast.makeText(applicationContext, "Login Berhasil!", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        } else {
+                            // Jika user membatalkan login
+                            state = state.copy(isLoading = false)
+                        }
+                    }
+                )
+
+                // --- SIDE EFFECT: START SERVICE ---
+                LaunchedEffect(isNotifEnabled, showOnboarding, userData) {
+                    // Cek Permission Android 13+
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS)
                             != PackageManager.PERMISSION_GRANTED) {
                             permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                         }
                     }
-                    if (isNotifEnabled && !showOnboarding && userName != null) {
+
+                    // Jalankan Service HANYA JIKA user sudah login & onboarding selesai
+                    if (isNotifEnabled && !showOnboarding && userData != null) {
                         startSoundService()
                     }
                 }
 
+                // --- UI CONTENT (FLOW TIDAK BERUBAH) ---
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
                     when {
+                        // 1. Flow Onboarding (Pertama kali buka)
                         showOnboarding -> {
                             OnboardingScreen(
                                 isNotificationEnabled = isNotifEnabled,
@@ -97,26 +165,48 @@ class MainActivity : ComponentActivity() {
                                 onOptimizeBattery = { requestChinesePhonePermissions(this@MainActivity) }
                             )
                         }
-                        userName == null -> {
+
+                        // 2. Flow Login (Jika Onboarding selesai TAPI User Null)
+                        userData == null -> {
                             LoginScreen(
-                                onNameSaved = { name ->
-                                    sharedPref.edit().putString("userName", name).apply()
-                                    userName = name
+                                state = state,
+                                onSignInClick = {
+                                    state = state.copy(isLoading = true)
+                                    lifecycleScope.launch {
+                                        val signInIntentSender = googleAuthUiClient.signIn()
+                                        if (signInIntentSender != null) {
+                                            launcher.launch(
+                                                IntentSenderRequest.Builder(signInIntentSender).build()
+                                            )
+                                        } else {
+                                            state = state.copy(isLoading = false, signInError = "Gagal membuka akun Google")
+                                        }
+                                    }
                                 }
                             )
                         }
+
+                        // 3. Flow Dashboard (Jika Onboarding selesai DAN User Ada)
                         else -> {
                             DashboardScreen(
-                                userName = userName!!,
+                                userName = userData?.userName ?: "Juragan",
                                 isNotificationEnabled = isNotifEnabled,
                                 onOpenNotificationSettings = { openNotificationSettings() },
                                 onOptimizeBattery = { requestChinesePhonePermissions(this@MainActivity) },
-                                // --- FITUR LOGOUT / GANTI AKUN ---
                                 onLogout = {
-                                    // 1. Hapus nama dari penyimpanan
-                                    sharedPref.edit().remove("userName").apply()
-                                    // 2. Set state ke null (Otomatis pindah ke Login Screen)
-                                    userName = null
+                                    lifecycleScope.launch {
+                                        // Proses Logout Firebase
+                                        googleAuthUiClient.signOut()
+
+                                        // Hapus data session
+                                        userData = null
+                                        state = SignInState() // Reset state
+
+                                        // Hapus backup lokal
+                                        sharedPref.edit().remove("userName").remove("userId").apply()
+
+                                        Toast.makeText(applicationContext, "Berhasil Keluar", Toast.LENGTH_SHORT).show()
+                                    }
                                 }
                             )
                         }

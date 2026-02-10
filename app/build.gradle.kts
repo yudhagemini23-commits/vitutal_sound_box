@@ -2,7 +2,11 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    // Pastikan di libs.versions.toml ada ksp, kalau merah ganti jadi: id("com.google.devtools.ksp")
     alias(libs.plugins.ksp)
+
+    // INI WAJIB ADA DI SINI AGAR FIREBASE JALAN
+    id("com.google.gms.google-services")
 }
 
 android {
@@ -41,7 +45,7 @@ android {
 }
 
 dependencies {
-    // --- CORE ANDROID & COMPOSE (Bawaan) ---
+    // --- CORE ANDROID & COMPOSE ---
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
@@ -53,26 +57,31 @@ dependencies {
 
     // --- TAMBAHAN UNTUK MVP SOUNDBOX ---
 
-    // 1. Room Database (Wajib: Untuk menyimpan history transaksi)
+    // 1. Room Database
     val roomVersion = "2.6.1"
     implementation("androidx.room:room-runtime:$roomVersion")
-    implementation("androidx.room:room-ktx:$roomVersion") // Penting untuk Coroutines/Flow
-    ksp("androidx.room:room-compiler:$roomVersion")      // Annotation Processor (Ganti Kapt)
+    implementation("androidx.room:room-ktx:$roomVersion")
+    ksp("androidx.room:room-compiler:$roomVersion")
 
-    // 2. Lifecycle & ViewModel untuk Compose (Agar data survive saat layar diputar)
+    // 2. Lifecycle & ViewModel Compose
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
 
-    // 3. Navigation Compose (Untuk pindah halaman Dashboard <-> Setting)
+    // 3. Navigation Compose
     implementation("androidx.navigation:navigation-compose:2.7.7")
 
-    // 4. Icons Extended (Opsional: Agar bisa pakai icon 'History', 'Settings', dll)
+    // 4. Icons Extended (Saya rapikan, cukup satu versi terbaru saja)
     implementation("androidx.compose.material:material-icons-extended:1.6.0")
 
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.core:core-splashscreen:1.0.1")
 
-    // --- TESTING (Bawaan) ---
+    // --- FIREBASE & GOOGLE SIGN IN (PENTING) ---
+    implementation(platform("com.google.firebase:firebase-bom:32.7.0"))
+    implementation("com.google.firebase:firebase-auth-ktx")
+    implementation("com.google.android.gms:play-services-auth:20.7.0")
+
+    // --- TESTING ---
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

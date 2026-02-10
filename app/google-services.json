@@ -1,0 +1,55 @@
+{
+  "project_info": {
+    "project_number": "757607146689",
+    "project_id": "soundhoree",
+    "storage_bucket": "soundhoree.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:757607146689:android:974753c33b2f4d0467a040",
+        "android_client_info": {
+          "package_name": "com.app.virtualsoundbox"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "757607146689-a0b5jg7al211aq9ohhdkpeabrbhdmj9g.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.app.virtualsoundbox",
+            "certificate_hash": "a72267bbbd3f0e198c78c01dd434bd8743faa91f"
+          }
+        },
+        {
+          "client_id": "757607146689-la75a7bmpqo81b9eiedc77cu5e2kjktp.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.app.virtualsoundbox",
+            "certificate_hash": "75e251b70552df68724823a2c3196ad90c664526"
+          }
+        },
+        {
+          "client_id": "757607146689-sei0tc2og7j1npaeeg48umgfr8mmpug4.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCRJD0cFnkv_7mpnivraCtQTybj1vQAxmQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "757607146689-sei0tc2og7j1npaeeg48umgfr8mmpug4.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
