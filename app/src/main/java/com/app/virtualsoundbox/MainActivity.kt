@@ -35,13 +35,17 @@ import com.app.virtualsoundbox.ui.dashboard.DashboardScreen
 import com.app.virtualsoundbox.ui.login.LoginScreen
 import com.app.virtualsoundbox.ui.login.SignInState
 import com.app.virtualsoundbox.ui.onboarding.OnboardingScreen
+import com.app.virtualsoundbox.ui.profile.ProfileSetupScreen // Import Screen Baru
 import com.app.virtualsoundbox.ui.theme.VirtualSoundboxTheme
 import kotlinx.coroutines.launch
 import com.google.firebase.FirebaseApp
 
+// Import Wajib untuk "by remember"
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+
 class MainActivity : ComponentActivity() {
 
-    // 1. Inisialisasi Google Auth Client
     private val googleAuthUiClient by lazy {
         GoogleAuthClient(applicationContext)
     }
@@ -50,10 +54,7 @@ class MainActivity : ComponentActivity() {
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
 
-        // --- TAMBAHAN PENTING: Fix Error "Default FirebaseApp is not initialized" ---
-        // Ini wajib dipanggil sebelum kode lain jalan agar Firebase bangun.
         FirebaseApp.initializeApp(this)
-        // ---------------------------------------------------------------------------
 
         enableEdgeToEdge()
 
@@ -66,18 +67,21 @@ class MainActivity : ComponentActivity() {
 
                 // --- STATES ---
                 var isNotifEnabled by remember { mutableStateOf(isNotificationServiceEnabled()) }
+
+                // State Navigasi
                 var showOnboarding by rememberSaveable {
                     mutableStateOf(sharedPref.getBoolean("isFirstRun", true))
                 }
 
-                // State Login Google
-                var state by remember { mutableStateOf(SignInState()) }
+                // State: Apakah Profil Toko sudah diisi?
+                var isProfileSetup by rememberSaveable {
+                    mutableStateOf(sharedPref.getBoolean("isProfileSetup", false))
+                }
 
-                // Cek User yang sedang login (Dari Firebase)
-                // Kode ini aman dijalankan sekarang karena FirebaseApp sudah di-init di atas
+                var state by remember { mutableStateOf(SignInState()) }
                 var userData by remember { mutableStateOf(googleAuthUiClient.getSignedInUser()) }
 
-                // --- LIFECYCLE OBSERVER ---
+                // --- LIFECYCLE ---
                 DisposableEffect(lifecycleOwner) {
                     val observer = LifecycleEventObserver { _, event ->
                         if (event == Lifecycle.Event.ON_RESUME) {
@@ -88,12 +92,11 @@ class MainActivity : ComponentActivity() {
                     onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
                 }
 
-                // --- PERMISSION LAUNCHER ---
+                // --- LAUNCHERS ---
                 val permissionLauncher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.RequestPermission()
-                ) { /* Handle Result */ }
+                ) { }
 
-                // --- GOOGLE SIGN IN LAUNCHER ---
                 val launcher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.StartIntentSenderForResult(),
                     onResult = { result ->
@@ -102,58 +105,52 @@ class MainActivity : ComponentActivity() {
                                 val signInResult = googleAuthUiClient.signInWithIntent(
                                     intent = result.data ?: return@launch
                                 )
-                                // Handle Hasil Login
                                 val user = signInResult.data
-                                val error = signInResult.errorMessage
-
                                 state = state.copy(
                                     isSuccess = user != null,
-                                    signInError = error,
+                                    signInError = signInResult.errorMessage,
                                     isLoading = false
                                 )
 
                                 if (user != null) {
                                     userData = user
-                                    // Simpan ke SharedPref sebagai Backup (Untuk Service)
+                                    // Simpan sesi login sementara
                                     with(sharedPref.edit()) {
-                                        putString("userName", user.userName)
+                                        putString("tempUserName", user.userName)
                                         putString("userEmail", user.email)
                                         putString("userId", user.userId)
                                         apply()
                                     }
-                                    Toast.makeText(applicationContext, "Login Berhasil!", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(applicationContext, "Login Google Berhasil!", Toast.LENGTH_SHORT).show()
                                 }
                             }
                         } else {
-                            // Jika user membatalkan login
                             state = state.copy(isLoading = false)
                         }
                     }
                 )
 
-                // --- SIDE EFFECT: START SERVICE ---
-                LaunchedEffect(isNotifEnabled, showOnboarding, userData) {
-                    // Cek Permission Android 13+
+                // --- START SERVICE ---
+                LaunchedEffect(isNotifEnabled, showOnboarding, userData, isProfileSetup) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS)
                             != PackageManager.PERMISSION_GRANTED) {
                             permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                         }
                     }
-
-                    // Jalankan Service HANYA JIKA user sudah login & onboarding selesai
-                    if (isNotifEnabled && !showOnboarding && userData != null) {
+                    // Service jalan hanya jika sudah LOGIN + PROFIL LENGKAP
+                    if (isNotifEnabled && !showOnboarding && userData != null && isProfileSetup) {
                         startSoundService()
                     }
                 }
 
-                // --- UI CONTENT (FLOW TIDAK BERUBAH) ---
+                // --- UI NAVIGATION FLOW ---
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
                     when {
-                        // 1. Flow Onboarding (Pertama kali buka)
+                        // 1. Onboarding
                         showOnboarding -> {
                             OnboardingScreen(
                                 isNotificationEnabled = isNotifEnabled,
@@ -166,7 +163,7 @@ class MainActivity : ComponentActivity() {
                             )
                         }
 
-                        // 2. Flow Login (Jika Onboarding selesai TAPI User Null)
+                        // 2. Login (Jika User belum ada)
                         userData == null -> {
                             LoginScreen(
                                 state = state,
@@ -186,25 +183,44 @@ class MainActivity : ComponentActivity() {
                             )
                         }
 
-                        // 3. Flow Dashboard (Jika Onboarding selesai DAN User Ada)
+                        // 3. Profile Setup (User ADA, tapi Profile Belum Setup)
+                        // INI BAGIAN PENTING UNTUK DATA STORE
+                        !isProfileSetup -> {
+                            ProfileSetupScreen(
+                                onProfileSaved = { storeName ->
+                                    // Simpan status bahwa profil sudah diisi
+                                    with(sharedPref.edit()) {
+                                        putBoolean("isProfileSetup", true)
+                                        putString("userName", storeName) // Update nama tampilan jadi Nama Toko
+                                        apply()
+                                    }
+                                    isProfileSetup = true // Trigger pindah ke Dashboard
+                                }
+                            )
+                        }
+
+                        // 4. Dashboard (Semua syarat terpenuhi)
                         else -> {
+                            // Ambil nama toko dari SharedPref, kalau null pakai nama Google
+                            val displayStoreName = sharedPref.getString("userName", userData?.userName) ?: "Juragan"
+
                             DashboardScreen(
-                                userName = userData?.userName ?: "Juragan",
+                                userName = displayStoreName,
                                 isNotificationEnabled = isNotifEnabled,
                                 onOpenNotificationSettings = { openNotificationSettings() },
                                 onOptimizeBattery = { requestChinesePhonePermissions(this@MainActivity) },
                                 onLogout = {
                                     lifecycleScope.launch {
-                                        // Proses Logout Firebase
                                         googleAuthUiClient.signOut()
-
-                                        // Hapus data session
                                         userData = null
-                                        state = SignInState() // Reset state
+                                        state = SignInState()
 
-                                        // Hapus backup lokal
-                                        sharedPref.edit().remove("userName").remove("userId").apply()
+                                        // Reset Session
+                                        sharedPref.edit().clear().apply()
+                                        // Kembalikan flag onboarding agar user baru tidak kaget (opsional, bisa dihapus)
+                                        // sharedPref.edit().putBoolean("isFirstRun", false).apply()
 
+                                        isProfileSetup = false
                                         Toast.makeText(applicationContext, "Berhasil Keluar", Toast.LENGTH_SHORT).show()
                                     }
                                 }
