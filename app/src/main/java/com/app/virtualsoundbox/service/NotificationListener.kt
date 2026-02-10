@@ -107,7 +107,7 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
                 rawMessage = cleanDisplay
             )
 
-            scope.launch { repository.saveTransaction(trx) }
+            scope.launch { repository.insert(trx) }
             speak("Dana masuk, ${amount.toInt()} rupiah")
         }
     }

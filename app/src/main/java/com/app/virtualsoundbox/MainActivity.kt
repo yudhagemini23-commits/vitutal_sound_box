@@ -44,7 +44,7 @@ class MainActivity : ComponentActivity() {
             VirtualSoundboxTheme {
                 val lifecycleOwner = LocalLifecycleOwner.current
 
-                // 1. States
+                // States
                 var isNotifEnabled by remember { mutableStateOf(isNotificationServiceEnabled()) }
                 var showOnboarding by rememberSaveable {
                     mutableStateOf(sharedPref.getBoolean("isFirstRun", true))
@@ -53,7 +53,7 @@ class MainActivity : ComponentActivity() {
                     mutableStateOf(sharedPref.getString("userName", null))
                 }
 
-                // 2. Observer Lifecycle
+                // Observer Lifecycle
                 DisposableEffect(lifecycleOwner) {
                     val observer = LifecycleEventObserver { _, event ->
                         if (event == Lifecycle.Event.ON_RESUME) {
@@ -68,7 +68,7 @@ class MainActivity : ComponentActivity() {
                     contract = ActivityResultContracts.RequestPermission()
                 ) { /* Handle Result */ }
 
-                // 3. Side Effect Service
+                // Side Effect Service
                 LaunchedEffect(isNotifEnabled, showOnboarding, userName) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS)
@@ -76,8 +76,6 @@ class MainActivity : ComponentActivity() {
                             permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                         }
                     }
-
-                    // Service jalan jika sudah selesai onboarding & login
                     if (isNotifEnabled && !showOnboarding && userName != null) {
                         startSoundService()
                     }
@@ -87,10 +85,8 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    // --- NAVIGATION FLOW ---
                     when {
                         showOnboarding -> {
-                            // Onboarding (Edukasi Awal - Belum Butuh Nama)
                             OnboardingScreen(
                                 isNotificationEnabled = isNotifEnabled,
                                 onFinished = {
@@ -102,7 +98,6 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         userName == null -> {
-                            // Login (Input Nama)
                             LoginScreen(
                                 onNameSaved = { name ->
                                     sharedPref.edit().putString("userName", name).apply()
@@ -111,12 +106,18 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         else -> {
-                            // Dashboard (Tampilkan Nama)
                             DashboardScreen(
                                 userName = userName!!,
                                 isNotificationEnabled = isNotifEnabled,
                                 onOpenNotificationSettings = { openNotificationSettings() },
-                                onOptimizeBattery = { requestChinesePhonePermissions(this@MainActivity) }
+                                onOptimizeBattery = { requestChinesePhonePermissions(this@MainActivity) },
+                                // --- FITUR LOGOUT / GANTI AKUN ---
+                                onLogout = {
+                                    // 1. Hapus nama dari penyimpanan
+                                    sharedPref.edit().remove("userName").apply()
+                                    // 2. Set state ke null (Otomatis pindah ke Login Screen)
+                                    userName = null
+                                }
                             )
                         }
                     }

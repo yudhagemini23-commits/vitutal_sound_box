@@ -1,6 +1,7 @@
 package com.app.virtualsoundbox.data.local
 
 import androidx.room.Dao
+import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
@@ -9,13 +10,21 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface TransactionDao {
-    // Menggunakan Flow agar UI otomatis update saat ada data baru
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(transaction: Transaction)
+
+    @Delete
+    suspend fun deleteTransaction(transaction: Transaction)
+
+    // Query default (Semua data)
     @Query("SELECT * FROM transactions ORDER BY timestamp DESC")
     fun getAllTransactions(): Flow<List<Transaction>>
 
-    @Query("SELECT SUM(amount) FROM transactions WHERE timestamp >= :startOfDay")
-    fun getTotalToday(startOfDay: Long): Flow<Double?>
+    // 1. Ambil transaksi berdasarkan rentang tanggal
+    @Query("SELECT * FROM transactions WHERE timestamp BETWEEN :startDate AND :endDate ORDER BY timestamp DESC")
+    fun getTransactionsByDateRange(startDate: Long, endDate: Long): Flow<List<Transaction>>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insert(transaction: Transaction)
+    // 2. Hitung total uang berdasarkan rentang tanggal
+    @Query("SELECT SUM(amount) FROM transactions WHERE timestamp BETWEEN :startDate AND :endDate")
+    fun getTotalAmountByDateRange(startDate: Long, endDate: Long): Flow<Double?>
 }

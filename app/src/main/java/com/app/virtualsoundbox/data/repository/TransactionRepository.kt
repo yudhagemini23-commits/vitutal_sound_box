@@ -1,27 +1,32 @@
 package com.app.virtualsoundbox.data.repository
 
-
 import com.app.virtualsoundbox.data.local.TransactionDao
 import com.app.virtualsoundbox.model.Transaction
 import kotlinx.coroutines.flow.Flow
-import java.util.Calendar
 
-class TransactionRepository(private val dao: TransactionDao) {
+class TransactionRepository(private val transactionDao: TransactionDao) {
 
-    val allTransactions: Flow<List<Transaction>> = dao.getAllTransactions()
+    // Fungsi Lama
+    val allTransactions: Flow<List<Transaction>> = transactionDao.getAllTransactions()
 
-    fun getTotalToday(): Flow<Double?> {
-        // Hitung milidetik awal hari ini (Jam 00:00:00)
-        val calendar = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }
-        return dao.getTotalToday(calendar.timeInMillis)
+    suspend fun insert(transaction: Transaction) {
+        transactionDao.insert(transaction)
     }
 
-    suspend fun saveTransaction(trx: Transaction) {
-        dao.insert(trx)
+    // --- FUNGSI BARU (JEMBATAN) ---
+
+    // 1. Ambil transaksi sesuai range tanggal
+    fun getTransactionsByDateRange(start: Long, end: Long): Flow<List<Transaction>> {
+        return transactionDao.getTransactionsByDateRange(start, end)
+    }
+
+    // 2. Ambil total uang sesuai range tanggal
+    fun getTotalAmountByDateRange(start: Long, end: Long): Flow<Double?> {
+        return transactionDao.getTotalAmountByDateRange(start, end)
+    }
+
+    // 3. Hapus transaksi
+    suspend fun deleteTransaction(transaction: Transaction) {
+        transactionDao.deleteTransaction(transaction)
     }
 }
