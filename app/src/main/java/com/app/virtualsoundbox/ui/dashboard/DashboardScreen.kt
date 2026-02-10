@@ -497,19 +497,89 @@ fun BatteryOptimizationCard(onClick: () -> Unit) {
 
 @Composable
 fun TransactionItem(trx: Transaction) {
-    Surface(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), shape = MaterialTheme.shapes.large, color = Color.White, shadowElevation = 1.dp) {
-        Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Box(modifier = Modifier.size(40.dp).background(Color(0xFFF1F8E9), CircleShape), contentAlignment = Alignment.Center) {
-                Text(NotificationParser.getAppName(trx.sourceApp).take(1), color = Color(0xFF2E7D32), fontWeight = FontWeight.Bold)
+    // Tentukan Gaya Tampilan (Normal vs Limited)
+    val cardColor = if (trx.isTrialLimited) Color(0xFFEEEEEE) else Color.White
+    val contentAlpha = if (trx.isTrialLimited) 0.4f else 1.0f // Transparan jika limited
+    val textColor = if (trx.isTrialLimited) Color.Gray else Color.Black
+    val amountColor = if (trx.isTrialLimited) Color.Gray else Color(0xFF2E7D32)
+
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        shape = MaterialTheme.shapes.large,
+        color = cardColor,
+        shadowElevation = if (trx.isTrialLimited) 0.dp else 1.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp).fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Icon
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(
+                        if (trx.isTrialLimited) Color.LightGray else Color(0xFFF1F8E9),
+                        CircleShape
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = NotificationParser.getAppName(trx.sourceApp).take(1),
+                    color = if (trx.isTrialLimited) Color.DarkGray else Color(0xFF2E7D32),
+                    fontWeight = FontWeight.Bold
+                )
             }
+
             Spacer(modifier = Modifier.width(16.dp))
+
+            // Text Tengah
             Column(modifier = Modifier.weight(1f)) {
-                Text(NotificationParser.getAppName(trx.sourceApp), fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                Text(trx.rawMessage.take(35).let { if (it.length >= 35) "$it..." else it }, fontSize = 12.sp, color = Color.Gray)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        NotificationParser.getAppName(trx.sourceApp),
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        color = textColor.copy(alpha = contentAlpha)
+                    )
+
+                    // LABEL PREMIUM ONLY
+                    if (trx.isTrialLimited) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Surface(color = Color.Gray, shape = RoundedCornerShape(4.dp)) {
+                            Text(
+                                "LOCKED",
+                                fontSize = 10.sp,
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+
+                Text(
+                    text = if (trx.isTrialLimited) "Suara dimatikan (Trial Habis)" else trx.rawMessage.take(35) + "...",
+                    fontSize = 12.sp,
+                    color = Color.Gray
+                )
             }
+
+            // Nominal & Jam
             Column(horizontalAlignment = Alignment.End) {
-                Text("+ ${formatRupiah(trx.amount)}", color = Color(0xFF2E7D32), fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
-                Text(SimpleDateFormat("HH:mm", Locale.getDefault()).format(trx.timestamp), fontSize = 11.sp, color = Color.LightGray)
+                Text(
+                    "+ ${formatRupiah(trx.amount)}",
+                    color = amountColor,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 15.sp
+                )
+                Text(
+                    SimpleDateFormat("HH:mm", Locale.getDefault()).format(trx.timestamp),
+                    fontSize = 11.sp,
+                    color = Color.LightGray
+                )
+                // Countdown text (Opsional)
+                if (trx.isTrialLimited) {
+                    Text("Hilang dlm 30m", fontSize = 10.sp, color = Color.Red.copy(alpha=0.6f))
+                }
             }
         }
     }

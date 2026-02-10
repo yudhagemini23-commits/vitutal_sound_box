@@ -5,33 +5,27 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import com.app.virtualsoundbox.model.Transaction
-import com.app.virtualsoundbox.model.UserProfile // Import tabel baru
+import com.app.virtualsoundbox.model.UserProfile
 
-@Database(
-    entities = [Transaction::class, UserProfile::class], // Tambahkan UserProfile di sini
-    version = 2, // Naikkan versinya
-    exportSchema = false
-)
+// PERBAIKAN 1: Naikkan version dari 1 ke 2
+@Database(entities = [Transaction::class, UserProfile::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun transactionDao(): TransactionDao
-    abstract fun userProfileDao(): UserProfileDao // Tambahkan akses DAO baru
+    abstract fun userProfileDao(): UserProfileDao
 
     companion object {
         @Volatile
-        private var INSTANCE: AppDatabase? = null
+        private var Instance: AppDatabase? = null
 
         fun getDatabase(context: Context): AppDatabase {
-            return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
-                    context.applicationContext,
-                    AppDatabase::class.java,
-                    "soundhoree_database"
-                )
-                    .fallbackToDestructiveMigration() // Hapus data lama jika versi berubah (Dev only)
+            return Instance ?: synchronized(this) {
+                Room.databaseBuilder(context, AppDatabase::class.java, "soundhoree_db")
+                    // PERBAIKAN 2: Tambahkan ini agar tidak crash saat struktur tabel berubah
+                    // Ini akan menghapus data lama dan membuat database baru yang bersih
+                    .fallbackToDestructiveMigration()
                     .build()
-                INSTANCE = instance
-                instance
+                    .also { Instance = it }
             }
         }
     }

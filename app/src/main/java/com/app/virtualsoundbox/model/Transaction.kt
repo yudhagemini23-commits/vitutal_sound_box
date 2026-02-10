@@ -9,5 +9,6 @@ data class Transaction(
     val sourceApp: String,   // misal: "BCA Mobile"
     val amount: Double,      // misal: 50000.0
     val rawMessage: String,  // Teks asli notifikasi
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val isTrialLimited: Boolean = false
 )

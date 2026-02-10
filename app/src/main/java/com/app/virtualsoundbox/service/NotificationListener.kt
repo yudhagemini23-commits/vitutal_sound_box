@@ -93,6 +93,18 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
         val amount = NotificationParser.extractAmount(finalText)
 
         if (amount > 0) {
+            // --- [NEW LOGIC] CEK SUBSCRIPTION & TRIAL ---
+            val sharedPref = applicationContext.getSharedPreferences("SoundHoreePrefs", Context.MODE_PRIVATE)
+            val isPremium = sharedPref.getBoolean("isPremium", false)
+            val trxCount = sharedPref.getInt("trxCount", 0)
+
+            // Batas Trial: 3 kali jika belum premium
+            val isLimitReached = !isPremium && trxCount >= 3
+
+            // Update Counter Transaksi (Bertambah terus)
+            sharedPref.edit().putInt("trxCount", trxCount + 1).apply()
+            // --------------------------------------------
+
             val cleanDisplay = finalText
                 .replace(Regex("(?i)android\\.app\\.Notification\\$[a-zA-Z]+"), "")
                 .replace(Regex("(?i)androidx\\.core\\.app\\.[a-zA-Z]+"), "")
@@ -101,14 +113,23 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
                 .trim()
                 .take(60)
 
+            // Masukkan status 'isTrialLimited' ke object Transaction
             val trx = Transaction(
                 sourceApp = pkgName,
                 amount = amount,
-                rawMessage = cleanDisplay
+                rawMessage = cleanDisplay,
+                timestamp = System.currentTimeMillis(), // Pastikan ada timestamp untuk fitur auto-delete
+                isTrialLimited = isLimitReached         // Flag untuk UI Greyout & Auto Delete
             )
 
             scope.launch { repository.insert(trx) }
-            speak("Dana masuk, ${amount.toInt()} rupiah")
+
+            // HANYA BICARA JIKA BELUM LIMIT
+            if (!isLimitReached) {
+                speak("Dana masuk, ${amount.toInt()} rupiah")
+            } else {
+                Log.d("AKD_LISTENER", "Trial Limit Reached. Suara dimatikan.")
+            }
         }
     }
 

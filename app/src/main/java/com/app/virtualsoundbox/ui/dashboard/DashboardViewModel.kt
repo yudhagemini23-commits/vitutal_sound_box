@@ -7,6 +7,7 @@ import com.app.virtualsoundbox.data.repository.TransactionRepository
 import com.app.virtualsoundbox.model.Transaction
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -97,6 +98,19 @@ class DashboardViewModel(private val repository: TransactionRepository) : ViewMo
         endCal.set(Calendar.MINUTE, 59)
 
         return Pair(startCal.timeInMillis, endCal.timeInMillis)
+    }
+
+    init {
+        // Otomatis bersihkan transaksi trial yang expired saat ViewModel dibuat
+        cleanUpExpiredTransactions()
+    }
+
+    private fun cleanUpExpiredTransactions() {
+        viewModelScope.launch {
+            // Hapus yang statusnya limited DAN lebih lama dari 30 menit yang lalu
+            val thirtyMinutesAgo = System.currentTimeMillis() - (30 * 60 * 1000)
+            repository.deleteExpiredLimited(thirtyMinutesAgo)
+        }
     }
 }
 
