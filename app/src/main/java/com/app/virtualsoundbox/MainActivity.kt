@@ -227,26 +227,33 @@ class MainActivity : ComponentActivity() {
     /**
      * Fungsi Inti: Cek apakah profil sudah ada di MySQL Backend
      */
+    @SuppressLint("UseKtx")
     private fun checkUserOnBackend(
         googleUid: String,
         email: String,
         onResult: (Boolean, String, String) -> Unit,
         onError: (String) -> Unit
     ) {
+        val sharedPref = getSharedPreferences("SoundHoreePrefs", Context.MODE_PRIVATE)
         lifecycleScope.launch {
             try {
-                // Kirim request login (hanya bawa UID & Email)
                 val request = LoginRequest(uid = googleUid, email = email, storeName = "", phoneNumber = "", category = "")
                 val response = RetrofitClient.instance.loginUser(request)
 
                 if (response.isSuccessful && response.body() != null) {
                     val authBody = response.body()!!
-                    val profile = authBody.user // Data profile dari MySQL
+                    val profile = authBody.user
+                    val sub = authBody.subscription
 
-                    // PERBAIKAN LOGIC:
-                    // Jika profil dari server sudah punya StoreName, berarti dia user terdaftar
+                    // --- SIMPAN INFO TRIAL DARI BACKEND ---
+                    if (sub != null) {
+                        sharedPref.edit()
+                            .putInt("remainingTrial", sub.remainingTrial)
+                            .putBoolean("isPremium", sub.isPremium)
+                            .apply()
+                    }
+
                     val isExist = !profile?.storeName.isNullOrBlank()
-
                     onResult(isExist, profile?.storeName ?: "", authBody.token)
                 } else {
                     onError("Gagal koneksi server: ${response.code()}")

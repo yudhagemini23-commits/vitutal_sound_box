@@ -21,6 +21,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -72,26 +73,21 @@ fun DashboardScreen(
     val transactions by viewModel.transactions.collectAsStateWithLifecycle()
     val filterLabel by viewModel.filterLabel.collectAsStateWithLifecycle()
 
-    // --- STATE SUBSCRIPTION & TRIAL ---
-    var isPremium by remember { mutableStateOf(sharedPref.getBoolean("isPremium", false)) }
-
-    // Mengambil jumlah transaksi total untuk hitungan trial (Disimpan di Prefs oleh Service)
-    // Default 0 jika baru instal
-    val transactionCount = sharedPref.getInt("trxCount", 0)
-    val maxTrial = 3
-    val remainingTrial = (maxTrial - transactionCount).coerceAtLeast(0)
+    // --- PERBAIKAN: AMBIL DATA SUBSCRIPTION DARI BACKEND (SharedPrefs) ---
+    val isPremium = sharedPref.getBoolean("isPremium", false)
+    val remainingTrial = sharedPref.getInt("remainingTrial", 0) // Data asli dari Golang
 
     var showSubscriptionPopup by remember { mutableStateOf(false) }
 
     // Logic Popup Otomatis: Jika bukan premium & trial habis, paksa muncul
-    LaunchedEffect(transactionCount, isPremium) {
-        if (!isPremium && remainingTrial == 0) {
+    LaunchedEffect(remainingTrial, isPremium) {
+        if (!isPremium && remainingTrial <= 0) {
             showSubscriptionPopup = true
         }
     }
 
     // --- STATE UI LOKAL ---
-    var selectedFilterIndex by remember { mutableStateOf(0) } // 0=Hari Ini, 1=Bulan Ini, 2=Custom
+    var selectedFilterIndex by remember { mutableStateOf(0) }
     var userProfile by remember { mutableStateOf<UserProfile?>(null) }
     var showProfileDialog by remember { mutableStateOf(false) }
 
@@ -136,7 +132,6 @@ fun DashboardScreen(
                     }
                 },
                 actions = {
-                    // Tombol PRO (Jika Premium)
                     if (isPremium) {
                         Icon(Icons.Default.WorkspacePremium, null, tint = Color(0xFFFFD700), modifier = Modifier.padding(end = 8.dp))
                     }
@@ -226,22 +221,16 @@ fun DashboardScreen(
 
         // --- POPUP DIALOGS ---
 
-        // 1. Profil Dialog
         if (showProfileDialog) {
             ProfileDetailDialog(userProfile, userName, { showProfileDialog = false }, { showProfileDialog = false; onLogout() })
         }
 
-        // 2. Subscription Dialog (Popup Penawaran)
         if (showSubscriptionPopup) {
             SubscriptionDialog(
                 remainingTrial = remainingTrial,
-                onDismiss = {
-                    // Jika trial habis, tidak bisa ditutup (harus subscribe)
-                    if (remainingTrial > 0) showSubscriptionPopup = false
-                },
+                onDismiss = { if (remainingTrial > 0) showSubscriptionPopup = false },
                 onSubscribeSuccess = { planName ->
                     sharedPref.edit().putBoolean("isPremium", true).apply()
-                    isPremium = true
                     showSubscriptionPopup = false
                     Toast.makeText(context, "Selamat! Anda berlangganan paket $planName", Toast.LENGTH_LONG).show()
                 }
@@ -258,15 +247,13 @@ fun DashboardScreen(
 fun PremiumBanner(remainingTrial: Int, onClick: () -> Unit) {
     Card(
         onClick = onClick,
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF8E1)), // Kuning Soft
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF8E1)),
         border = BorderStroke(1.dp, Color(0xFFFFD54F)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .background(Color(0xFFFFB300), CircleShape),
+                modifier = Modifier.size(40.dp).background(Color(0xFFFFB300), CircleShape),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(Icons.Default.Star, null, tint = Color.White)
@@ -274,9 +261,7 @@ fun PremiumBanner(remainingTrial: Int, onClick: () -> Unit) {
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text("Mode Gratis Terbatas", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color(0xFFE65100))
-
                 if (remainingTrial > 0) {
-                    // PERBAIKAN DI SINI: Pakai kurung kurawal ${remainingTrial}x
                     Text("Sisa ${remainingTrial}x Transaksi Suara.", fontSize = 12.sp, color = Color(0xFFEF6C00))
                 } else {
                     Text("Kuota Habis! Upgrade Premium sekarang.", fontSize = 12.sp, color = Color(0xFFC62828), fontWeight = FontWeight.Bold)
@@ -294,7 +279,7 @@ fun SubscriptionDialog(
     onSubscribeSuccess: (String) -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    var selectedPlan by remember { mutableStateOf(1) } // 0=Weekly, 1=Monthly
+    var selectedPlan by remember { mutableStateOf(1) }
     var isProcessing by remember { mutableStateOf(false) }
 
     Dialog(
@@ -330,10 +315,8 @@ fun SubscriptionDialog(
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                // Paket Mingguan
                 PlanCard("Mingguan", "Rp 5.000", "/minggu", selectedPlan == 0, false) { selectedPlan = 0 }
                 Spacer(modifier = Modifier.height(12.dp))
-                // Paket Bulanan
                 PlanCard("Bulanan (Hemat 50%)", "Rp 10.000", "/bulan", selectedPlan == 1, true) { selectedPlan = 1 }
 
                 Spacer(modifier = Modifier.height(24.dp))
@@ -421,8 +404,6 @@ fun BenefitItem(text: String) {
     }
 }
 
-// --- KOMPONEN LAMA (TIDAK BERUBAH) ---
-
 @Composable
 fun StatusCard(isEnabled: Boolean, onClick: () -> Unit) {
     val backgroundColor = if (isEnabled) Color(0xFFE8F5E9) else Color(0xFFFFEBEE)
@@ -497,9 +478,8 @@ fun BatteryOptimizationCard(onClick: () -> Unit) {
 
 @Composable
 fun TransactionItem(trx: Transaction) {
-    // Tentukan Gaya Tampilan (Normal vs Limited)
     val cardColor = if (trx.isTrialLimited) Color(0xFFEEEEEE) else Color.White
-    val contentAlpha = if (trx.isTrialLimited) 0.4f else 1.0f // Transparan jika limited
+    val contentAlpha = if (trx.isTrialLimited) 0.4f else 1.0f
     val textColor = if (trx.isTrialLimited) Color.Gray else Color.Black
     val amountColor = if (trx.isTrialLimited) Color.Gray else Color(0xFF2E7D32)
 
@@ -513,7 +493,6 @@ fun TransactionItem(trx: Transaction) {
             modifier = Modifier.padding(16.dp).fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Icon
             Box(
                 modifier = Modifier
                     .size(40.dp)
@@ -532,7 +511,6 @@ fun TransactionItem(trx: Transaction) {
 
             Spacer(modifier = Modifier.width(16.dp))
 
-            // Text Tengah
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
@@ -542,7 +520,6 @@ fun TransactionItem(trx: Transaction) {
                         color = textColor.copy(alpha = contentAlpha)
                     )
 
-                    // LABEL PREMIUM ONLY
                     if (trx.isTrialLimited) {
                         Spacer(modifier = Modifier.width(8.dp))
                         Surface(color = Color.Gray, shape = RoundedCornerShape(4.dp)) {
@@ -563,7 +540,6 @@ fun TransactionItem(trx: Transaction) {
                 )
             }
 
-            // Nominal & Jam
             Column(horizontalAlignment = Alignment.End) {
                 Text(
                     "+ ${formatRupiah(trx.amount)}",
@@ -576,10 +552,6 @@ fun TransactionItem(trx: Transaction) {
                     fontSize = 11.sp,
                     color = Color.LightGray
                 )
-                // Countdown text (Opsional)
-                if (trx.isTrialLimited) {
-                    Text("Hilang dlm 30m", fontSize = 10.sp, color = Color.Red.copy(alpha=0.6f))
-                }
             }
         }
     }

@@ -13,10 +13,10 @@ data class LoginRequest(
 data class AuthResponse(
     @SerializedName("status") val status: String,
     @SerializedName("token") val token: String,
-    @SerializedName("user") val user: UserProfileDto? // <-- TAMBAHKAN INI
+    @SerializedName("user") val user: UserProfileDto?,
+    @SerializedName("subscription") val subscription: SubscriptionDto?
 )
 
-// Model untuk menampung data user dari MySQL
 data class UserProfileDto(
     @SerializedName("uid") val uid: String,
     @SerializedName("store_name") val storeName: String?,
@@ -32,4 +32,11 @@ data class TransactionDto(
     @SerializedName("raw_message") val rawMessage: String,
     @SerializedName("timestamp") val timestamp: Long,
     @SerializedName("is_trial_limited") val isTrialLimited: Boolean
+)
+
+data class SubscriptionDto(
+    @SerializedName("is_premium") val isPremium: Boolean,
+    @SerializedName("trial_limit") val trialLimit: Int,
+    @SerializedName("trial_usage") val trialUsage: Int,
+    @SerializedName("remaining_trial") val remainingTrial: Int
 )
