@@ -7,7 +7,8 @@ data class LoginRequest(
     @SerializedName("uid") val uid: String,
     @SerializedName("email") val email: String,
     @SerializedName("store_name") val storeName: String,
-    @SerializedName("phone_number") val phoneNumber: String
+    @SerializedName("phone_number") val phoneNumber: String,
+    @SerializedName("category") val category: String
 )
 
 // Response Login (Dapat Token)

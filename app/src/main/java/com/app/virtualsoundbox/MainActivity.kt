@@ -106,14 +106,19 @@ class MainActivity : ComponentActivity() {
                                 val signInResult = googleAuthUiClient.signInWithIntent(
                                     intent = result.data ?: return@launch
                                 )
-                                if (signInResult.data != null) {
-                                    userData = signInResult.data
-                                    // Simpan info sementara untuk nama di Setup Screen
-                                    sharedPref.edit().putString("userName", userData?.userName).apply()
-                                    Toast.makeText(applicationContext, "Login Berhasil!", Toast.LENGTH_SHORT).show()
+                                val user = signInResult.data
+                                if (user != null) {
+                                    userData = user
+                                    // --- SIMPAN EMAIL DISINI ---
+                                    sharedPref.edit()
+                                        .putString("userEmail", user.email) // Simpan Email asli Google
+                                        .putString("userName", user.userName) // Nama asli Google buat greeting
+                                        .apply()
+
+                                    Toast.makeText(applicationContext, "Login Google Sukses!", Toast.LENGTH_SHORT).show()
                                 }
                                 state = state.copy(
-                                    isSuccess = signInResult.data != null,
+                                    isSuccess = user != null,
                                     signInError = signInResult.errorMessage,
                                     isLoading = false
                                 )

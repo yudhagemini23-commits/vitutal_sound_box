@@ -20,7 +20,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     private val _setupState = MutableStateFlow<SetupState>(SetupState.Idle)
     val setupState = _setupState.asStateFlow()
 
-    fun registerUser(storeName: String, email: String, phone: String) {
+    fun registerUser(storeName: String, email: String, phone: String, category: String) {
         _setupState.value = SetupState.Loading
 
         viewModelScope.launch {
@@ -28,12 +28,12 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                 // 1. Generate UID Unik untuk Instalasi ini
                 // (Nanti bisa diganti dengan UID dari Google Sign In jika sudah ada)
                 val newUid = UUID.randomUUID().toString()
-
                 val request = LoginRequest(
                     uid = newUid,
                     email = email,
                     storeName = storeName,
-                    phoneNumber = phone
+                    phoneNumber = phone,
+                    category = category
                 )
 
                 // 2. Panggil API Backend

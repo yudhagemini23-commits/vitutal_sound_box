@@ -43,7 +43,8 @@ fun ProfileSetupScreen(
 
     // 1. Ambil Data Awal (jika ada sisa login sebelumnya)
     val sharedPref = context.getSharedPreferences("SoundHoreePrefs", Context.MODE_PRIVATE)
-    val existingName = sharedPref.getString("userName", "") ?: ""
+    val googleEmail = sharedPref.getString("userEmail", "") ?: ""
+    val googleName = sharedPref.getString("userName", "") ?: ""
 
     // Database Room Local
     val db = AppDatabase.getDatabase(context)
@@ -53,7 +54,7 @@ fun ProfileSetupScreen(
     val setupState by viewModel.setupState.collectAsState()
 
     // State Form
-    var storeName by remember { mutableStateOf(existingName) }
+    var storeName by remember { mutableStateOf(googleName) }
     var phoneNumber by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf("") }
 
@@ -208,11 +209,12 @@ fun ProfileSetupScreen(
                         Toast.makeText(context, "Mohon lengkapi semua data!", Toast.LENGTH_SHORT).show()
                     } else {
                         // --- INTEGRASI BACKEND ---
-                        // Panggil ViewModel untuk Register ke Golang
-                        // Email di-hardcode dulu atau tambahkan field input email jika mau
-                        val dummyEmail = "user.${System.currentTimeMillis()}@soundhoree.app"
-
-                        viewModel.registerUser(storeName, dummyEmail, phoneNumber)
+                        viewModel.registerUser(
+                            storeName = storeName,
+                            email = googleEmail,
+                            phone = phoneNumber,
+                            category = selectedCategory // SEKARANG TERKIRIM
+                        )
                     }
                 },
                 modifier = Modifier.fillMaxWidth().height(56.dp),
