@@ -79,6 +79,8 @@ class MainActivity : ComponentActivity() {
                 }
 
                 var userData by remember { mutableStateOf(googleAuthUiClient.getSignedInUser()) }
+
+                // Menentukan apakah user sudah setup berdasarkan data lokal (Session Manager)
                 var isProfileSetup by remember { mutableStateOf(userSession.isUserLoggedIn()) }
                 var state by remember { mutableStateOf(SignInState()) }
 
@@ -111,25 +113,30 @@ class MainActivity : ComponentActivity() {
                                 val user = signInResult.data
                                 if (user != null) {
                                     userData = user
-                                    // PENTING: Simpan UID Google ke SharedPreferences agar tidak kosong saat diakses Screen lain
+                                    // 1. Simpan UID Google ke SharedPreferences
                                     sharedPref.edit()
                                         .putString("userId", user.userId)
                                         .putString("userEmail", user.email)
                                         .putString("userName", user.userName)
                                         .apply()
 
-                                    // Cek ke Backend apakah user lama atau baru
+                                    // 2. CEK KE BACKEND GOLANG (Idempotent Login)
                                     checkUserOnBackend(
                                         googleUid = user.userId,
                                         email = user.email ?: "",
                                         onResult = { isExist, storeName, token ->
                                             if (isExist) {
+                                                // USER LAMA: Simpan session & langsung Dashboard
                                                 userSession.saveSession(token, user.userId, user.email ?: "", storeName)
-                                                // Sync data transaksi lama
+                                                sharedPref.edit().putString("userName", storeName).apply()
+
+                                                // Sync data dari server ke Room
                                                 profileViewModel.registerOrLogin(storeName, user.email ?: "", "", "", user.userId)
+
                                                 isProfileSetup = true
                                                 Toast.makeText(applicationContext, "Selamat Datang Kembali!", Toast.LENGTH_SHORT).show()
                                             } else {
+                                                // USER BARU: Masuk ke Setup Profil
                                                 isProfileSetup = false
                                                 Toast.makeText(applicationContext, "Lengkapi profil toko Anda", Toast.LENGTH_SHORT).show()
                                             }
@@ -217,6 +224,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Fungsi Inti: Cek apakah profil sudah ada di MySQL Backend
+     */
     private fun checkUserOnBackend(
         googleUid: String,
         email: String,
@@ -225,31 +235,25 @@ class MainActivity : ComponentActivity() {
     ) {
         lifecycleScope.launch {
             try {
+                // Kirim request login (hanya bawa UID & Email)
                 val request = LoginRequest(uid = googleUid, email = email, storeName = "", phoneNumber = "", category = "")
                 val response = RetrofitClient.instance.loginUser(request)
 
                 if (response.isSuccessful && response.body() != null) {
-                    val body = response.body()!!
-                    val token = body.token
+                    val authBody = response.body()!!
+                    val profile = authBody.user // Data profile dari MySQL
 
-                    // Kita asumsikan Backend mengembalikan data User di dalam body
-                    // Jika StoreName di database tidak kosong, berarti dia user lama
-                    // (Sesuaikan dengan struktur LoginResponse Go Anda)
-                    val profileResponse = RetrofitClient.instance.getTransactions(
-                        token = "Bearer $token",
-                        userId = googleUid,
-                        start = 0,
-                        end = System.currentTimeMillis()
-                    )
+                    // PERBAIKAN LOGIC:
+                    // Jika profil dari server sudah punya StoreName, berarti dia user terdaftar
+                    val isExist = !profile?.storeName.isNullOrBlank()
 
-                    // Jika user sudah punya riwayat atau data profil (Logic bisa disesuaikan)
-                    // Disini kita anggap jika response OK, kita cek ketersediaan data profil
-                    onResult(false, "", token) // Sementara kembalikan false agar masuk Setup dulu untuk test pertama
+                    onResult(isExist, profile?.storeName ?: "", authBody.token)
                 } else {
-                    onError("Gagal koneksi server")
+                    onError("Gagal koneksi server: ${response.code()}")
                 }
             } catch (e: Exception) {
-                onError("Kesalahan: ${e.message}")
+                Log.e("AKD_AUTH", "Error Backend: ${e.message}")
+                onError("Kesalahan Jaringan")
             }
         }
     }
