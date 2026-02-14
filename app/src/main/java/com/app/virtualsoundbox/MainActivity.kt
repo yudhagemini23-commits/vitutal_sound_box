@@ -35,14 +35,14 @@ import com.app.virtualsoundbox.ui.dashboard.DashboardScreen
 import com.app.virtualsoundbox.ui.login.LoginScreen
 import com.app.virtualsoundbox.ui.login.SignInState
 import com.app.virtualsoundbox.ui.onboarding.OnboardingScreen
-import com.app.virtualsoundbox.ui.profile.ProfileSetupScreen // Import Screen Baru
+import com.app.virtualsoundbox.ui.profile.ProfileSetupScreen
 import com.app.virtualsoundbox.ui.theme.VirtualSoundboxTheme
 import kotlinx.coroutines.launch
 import com.google.firebase.FirebaseApp
 
-// Import Wajib untuk "by remember"
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import com.app.virtualsoundbox.utils.UserSession
 
 class MainActivity : ComponentActivity() {
 
@@ -55,10 +55,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         FirebaseApp.initializeApp(this)
-
         enableEdgeToEdge()
 
+        // Inisialisasi Session & Prefs
         val sharedPref = getSharedPreferences("SoundHoreePrefs", Context.MODE_PRIVATE)
+        val userSession = UserSession(this)
 
         setContent {
             VirtualSoundboxTheme {
@@ -68,20 +69,20 @@ class MainActivity : ComponentActivity() {
                 // --- STATES ---
                 var isNotifEnabled by remember { mutableStateOf(isNotificationServiceEnabled()) }
 
-                // State Navigasi
+                // 1. Cek Onboarding
                 var showOnboarding by rememberSaveable {
                     mutableStateOf(sharedPref.getBoolean("isFirstRun", true))
                 }
 
-                // State: Apakah Profil Toko sudah diisi?
-                var isProfileSetup by rememberSaveable {
-                    mutableStateOf(sharedPref.getBoolean("isProfileSetup", false))
-                }
-
-                var state by remember { mutableStateOf(SignInState()) }
+                // 2. Cek apakah sudah Login Google
                 var userData by remember { mutableStateOf(googleAuthUiClient.getSignedInUser()) }
 
-                // --- LIFECYCLE ---
+                // 3. Cek apakah sudah Register ke Backend Golang (Punya Token)
+                var isProfileSetup by remember { mutableStateOf(userSession.isUserLoggedIn()) }
+
+                var state by remember { mutableStateOf(SignInState()) }
+
+                // --- LIFECYCLE OBSERVER ---
                 DisposableEffect(lifecycleOwner) {
                     val observer = LifecycleEventObserver { _, event ->
                         if (event == Lifecycle.Event.ON_RESUME) {
@@ -105,24 +106,17 @@ class MainActivity : ComponentActivity() {
                                 val signInResult = googleAuthUiClient.signInWithIntent(
                                     intent = result.data ?: return@launch
                                 )
-                                val user = signInResult.data
+                                if (signInResult.data != null) {
+                                    userData = signInResult.data
+                                    // Simpan info sementara untuk nama di Setup Screen
+                                    sharedPref.edit().putString("userName", userData?.userName).apply()
+                                    Toast.makeText(applicationContext, "Login Berhasil!", Toast.LENGTH_SHORT).show()
+                                }
                                 state = state.copy(
-                                    isSuccess = user != null,
+                                    isSuccess = signInResult.data != null,
                                     signInError = signInResult.errorMessage,
                                     isLoading = false
                                 )
-
-                                if (user != null) {
-                                    userData = user
-                                    // Simpan sesi login sementara
-                                    with(sharedPref.edit()) {
-                                        putString("tempUserName", user.userName)
-                                        putString("userEmail", user.email)
-                                        putString("userId", user.userId)
-                                        apply()
-                                    }
-                                    Toast.makeText(applicationContext, "Login Google Berhasil!", Toast.LENGTH_SHORT).show()
-                                }
                             }
                         } else {
                             state = state.copy(isLoading = false)
@@ -130,16 +124,16 @@ class MainActivity : ComponentActivity() {
                     }
                 )
 
-                // --- START SERVICE ---
-                LaunchedEffect(isNotifEnabled, showOnboarding, userData, isProfileSetup) {
+                // --- AUTO START SERVICE ---
+                LaunchedEffect(isNotifEnabled, showOnboarding, isProfileSetup) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS)
                             != PackageManager.PERMISSION_GRANTED) {
                             permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                         }
                     }
-                    // Service jalan hanya jika sudah LOGIN + PROFIL LENGKAP
-                    if (isNotifEnabled && !showOnboarding && userData != null && isProfileSetup) {
+                    // Service Aktif hanya jika: Notif Izin Aktif + Bukan Onboarding + Sudah Setup Profil (Punya Token)
+                    if (isNotifEnabled && !showOnboarding && isProfileSetup) {
                         startSoundService()
                     }
                 }
@@ -150,7 +144,7 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     when {
-                        // 1. Onboarding
+                        // LAYER 1: Onboarding (Cuma sekali seumur hidup aplikasi)
                         showOnboarding -> {
                             OnboardingScreen(
                                 isNotificationEnabled = isNotifEnabled,
@@ -163,7 +157,7 @@ class MainActivity : ComponentActivity() {
                             )
                         }
 
-                        // 2. Login (Jika User belum ada)
+                        // LAYER 2: Google Login (Syarat awal)
                         userData == null -> {
                             LoginScreen(
                                 state = state,
@@ -172,37 +166,32 @@ class MainActivity : ComponentActivity() {
                                     lifecycleScope.launch {
                                         val signInIntentSender = googleAuthUiClient.signIn()
                                         if (signInIntentSender != null) {
-                                            launcher.launch(
-                                                IntentSenderRequest.Builder(signInIntentSender).build()
-                                            )
+                                            launcher.launch(IntentSenderRequest.Builder(signInIntentSender).build())
                                         } else {
-                                            state = state.copy(isLoading = false, signInError = "Gagal membuka akun Google")
+                                            state = state.copy(isLoading = false, signInError = "Gagal")
                                         }
                                     }
                                 }
                             )
                         }
 
-                        // 3. Profile Setup (User ADA, tapi Profile Belum Setup)
-                        // INI BAGIAN PENTING UNTUK DATA STORE
+                        // LAYER 3: Profile Setup (Register ke Backend Golang)
                         !isProfileSetup -> {
                             ProfileSetupScreen(
                                 onProfileSaved = { storeName ->
-                                    // Simpan status bahwa profil sudah diisi
-                                    with(sharedPref.edit()) {
-                                        putBoolean("isProfileSetup", true)
-                                        putString("userName", storeName) // Update nama tampilan jadi Nama Toko
-                                        apply()
-                                    }
-                                    isProfileSetup = true // Trigger pindah ke Dashboard
+                                    // Update nama di SharedPref untuk display Dashboard
+                                    sharedPref.edit().putString("userName", storeName).apply()
+                                    // Trigger pindah ke Dashboard
+                                    isProfileSetup = true
                                 }
                             )
                         }
 
-                        // 4. Dashboard (Semua syarat terpenuhi)
+                        // LAYER 4: Dashboard (Sudah Login & Punya Token Golang)
                         else -> {
-                            // Ambil nama toko dari SharedPref, kalau null pakai nama Google
-                            val displayStoreName = sharedPref.getString("userName", userData?.userName) ?: "Juragan"
+                            val displayStoreName = userSession.getUserId()?.let {
+                                sharedPref.getString("userName", userData?.userName)
+                            } ?: userData?.userName ?: "Juragan"
 
                             DashboardScreen(
                                 userName = displayStoreName,
@@ -211,16 +200,16 @@ class MainActivity : ComponentActivity() {
                                 onOptimizeBattery = { requestChinesePhonePermissions(this@MainActivity) },
                                 onLogout = {
                                     lifecycleScope.launch {
+                                        // 1. Logout Google
                                         googleAuthUiClient.signOut()
+                                        // 2. Logout Session Golang (Hapus Token & UID)
+                                        userSession.logout()
+
+                                        // Reset Local States
                                         userData = null
+                                        isProfileSetup = false
                                         state = SignInState()
 
-                                        // Reset Session
-                                        sharedPref.edit().clear().apply()
-                                        // Kembalikan flag onboarding agar user baru tidak kaget (opsional, bisa dihapus)
-                                        // sharedPref.edit().putBoolean("isFirstRun", false).apply()
-
-                                        isProfileSetup = false
                                         Toast.makeText(applicationContext, "Berhasil Keluar", Toast.LENGTH_SHORT).show()
                                     }
                                 }
@@ -231,6 +220,8 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    // --- HELPER METHODS ---
 
     private fun openNotificationSettings() {
         try {

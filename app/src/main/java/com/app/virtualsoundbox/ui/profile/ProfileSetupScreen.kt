@@ -22,37 +22,79 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel // Pastikan ada dependency ini
 import com.app.virtualsoundbox.data.local.AppDatabase
 import com.app.virtualsoundbox.model.UserProfile
-import com.google.firebase.auth.ktx.auth
-import com.google.firebase.ktx.Firebase
+import com.app.virtualsoundbox.utils.UserSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileSetupScreen(
-    // PERBAIKAN DI SINI: Sekarang menerima String (storeName)
-    onProfileSaved: (String) -> Unit
+    onProfileSaved: (String) -> Unit,
+    // Inject ViewModel di sini
+    viewModel: ProfileViewModel = viewModel()
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val userSession = remember { UserSession(context) }
 
-    // 1. Ambil Data dari SharedPreferences (Data dari Login Screen sebelumnya)
+    // 1. Ambil Data Awal (jika ada sisa login sebelumnya)
     val sharedPref = context.getSharedPreferences("SoundHoreePrefs", Context.MODE_PRIVATE)
     val existingName = sharedPref.getString("userName", "") ?: ""
 
-    // Inisialisasi Database Local
+    // Database Room Local
     val db = AppDatabase.getDatabase(context)
     val userProfileDao = db.userProfileDao()
+
+    // Observasi State dari ViewModel (Loading, Success, Error)
+    val setupState by viewModel.setupState.collectAsState()
 
     // State Form
     var storeName by remember { mutableStateOf(existingName) }
     var phoneNumber by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf("") }
-    var isLoading by remember { mutableStateOf(false) }
+
+    // Ganti variable isLoading manual dengan state dari ViewModel
+    val isLoading = setupState is SetupState.Loading
+
+    // --- LOGIC: DENGARKAN HASIL DARI BACKEND ---
+    LaunchedEffect(setupState) {
+        when (setupState) {
+            is SetupState.Success -> {
+                // 1. Backend Sukses, Token sudah disimpan ViewModel di UserSession
+                // 2. Sekarang kita simpan data ke Room Local (Backup Offline)
+                scope.launch {
+                    val uid = userSession.getUserId() ?: "unknown_uid"
+                    val email = "user@soundhoree.app" // Bisa diambil dari input jika ada field email
+
+                    val newProfile = UserProfile(
+                        uid = uid,
+                        email = email,
+                        storeName = storeName,
+                        phoneNumber = phoneNumber,
+                        category = selectedCategory,
+                        joinedAt = System.currentTimeMillis(),
+                        isSynced = true // Karena sudah sukses dari backend
+                    )
+
+                    withContext(Dispatchers.IO) {
+                        userProfileDao.insert(newProfile)
+                    }
+
+                    Toast.makeText(context, "Profil Tersimpan & Online!", Toast.LENGTH_SHORT).show()
+                    onProfileSaved(storeName) // Pindah ke Home
+                }
+            }
+            is SetupState.Error -> {
+                val errorMsg = (setupState as SetupState.Error).message
+                Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show()
+            }
+            else -> {}
+        }
+    }
 
     val categories = listOf(
         "Kuliner (Makanan/Minuman)",
@@ -79,7 +121,7 @@ fun ProfileSetupScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Informasi
+            // Informasi Header
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color(0xFFE3F2FD)),
                 modifier = Modifier.fillMaxWidth()
@@ -89,7 +131,7 @@ fun ProfileSetupScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "Halo, Juragan $existingName! Silakan lengkapi detail berikut agar struk dan laporan lebih rapi.",
+                        "Halo Juragan! Data ini akan disinkronkan ke server agar aman jika ganti HP.",
                         fontSize = 14.sp,
                         color = Color(0xFF0D47A1)
                     )
@@ -105,7 +147,8 @@ fun ProfileSetupScreen(
                 label = { Text("Nama Toko / Usaha") },
                 leadingIcon = { Icon(Icons.Default.Store, null) },
                 modifier = Modifier.fillMaxWidth(),
-                singleLine = true
+                singleLine = true,
+                enabled = !isLoading
             )
 
             // 2. Input Nomor HP
@@ -117,7 +160,8 @@ fun ProfileSetupScreen(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                placeholder = { Text("0812...") }
+                placeholder = { Text("0812...") },
+                enabled = !isLoading
             )
 
             // 3. Pilihan Kategori
@@ -134,7 +178,7 @@ fun ProfileSetupScreen(
                                 .fillMaxWidth()
                                 .selectable(
                                     selected = (selectedCategory == category),
-                                    onClick = { selectedCategory = category }
+                                    onClick = { if (!isLoading) selectedCategory = category }
                                 )
                                 .padding(horizontal = 16.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -142,7 +186,8 @@ fun ProfileSetupScreen(
                             RadioButton(
                                 selected = (selectedCategory == category),
                                 onClick = null,
-                                colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF2E7D32))
+                                colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF2E7D32)),
+                                enabled = !isLoading
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(text = category, fontSize = 14.sp)
@@ -162,39 +207,12 @@ fun ProfileSetupScreen(
                     if (storeName.isBlank() || phoneNumber.isBlank() || selectedCategory.isBlank()) {
                         Toast.makeText(context, "Mohon lengkapi semua data!", Toast.LENGTH_SHORT).show()
                     } else {
-                        isLoading = true
+                        // --- INTEGRASI BACKEND ---
+                        // Panggil ViewModel untuk Register ke Golang
+                        // Email di-hardcode dulu atau tambahkan field input email jika mau
+                        val dummyEmail = "user.${System.currentTimeMillis()}@soundhoree.app"
 
-                        val currentUser = Firebase.auth.currentUser
-                        val uid = currentUser?.uid ?: UUID.randomUUID().toString()
-                        val email = currentUser?.email ?: "local_user@soundhoree.app"
-
-                        // Object UserProfile
-                        val newProfile = UserProfile(
-                            uid = uid,
-                            email = email,
-                            storeName = storeName,
-                            phoneNumber = phoneNumber,
-                            category = selectedCategory,
-                            joinedAt = System.currentTimeMillis(),
-                            isSynced = false
-                        )
-
-                        // Simpan ke Room Database
-                        scope.launch {
-                            try {
-                                withContext(Dispatchers.IO) {
-                                    userProfileDao.insert(newProfile)
-                                }
-                                Toast.makeText(context, "Profil Berhasil Disimpan!", Toast.LENGTH_SHORT).show()
-
-                                // PERBAIKAN DI SINI: Kirim nama toko ke MainActivity
-                                onProfileSaved(storeName)
-                            } catch (e: Exception) {
-                                Toast.makeText(context, "Gagal menyimpan: ${e.message}", Toast.LENGTH_SHORT).show()
-                            } finally {
-                                isLoading = false
-                            }
-                        }
+                        viewModel.registerUser(storeName, dummyEmail, phoneNumber)
                     }
                 },
                 modifier = Modifier.fillMaxWidth().height(56.dp),
@@ -205,7 +223,7 @@ fun ProfileSetupScreen(
                 if (isLoading) {
                     CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp))
                 } else {
-                    Text("Simpan & Lanjutkan", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text("Simpan & Onlinekan", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.width(8.dp))
                     Icon(Icons.Default.Check, null)
                 }

@@ -71,68 +71,104 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         val notification = sbn?.notification ?: return
-        val pkgName = sbn.packageName ?: ""
+        val pkgName = sbn.packageName ?: "" // Perbaikan: Handle null safety
 
-        if (!TARGET_APPS.any { pkgName.contains(it) }) return
+        // Cek apakah paket aplikasi ada di daftar target
+        // (Logic Mas sebelumnya pakai .any { contains } sudah oke, tapi ini lebih aman)
+        val isTarget = TARGET_APPS.any { pkgName.contains(it, ignoreCase = true) }
+        if (!isTarget) return
 
         val extras = notification.extras
         val allTexts = mutableListOf<String>()
 
-        sbn.tag?.let { allTexts.add(it) }
+        // Ambil Title & Text
+        extras.getCharSequence("android.title")?.let { allTexts.add(it.toString()) }
+        extras.getCharSequence("android.text")?.let { allTexts.add(it.toString()) }
+        extras.getCharSequence("android.bigText")?.let { allTexts.add(it.toString()) }
 
-        for (key in extras.keySet()) {
-            val value = extras.get(key)
-            if (value is CharSequence || value is String) {
-                allTexts.add(value.toString())
+        // Fallback ke strategi lama Mas jika null
+        if (allTexts.isEmpty()) {
+            for (key in extras.keySet()) {
+                val value = extras.get(key)
+                if (value is CharSequence || value is String) {
+                    allTexts.add(value.toString())
+                }
             }
         }
 
         val finalText = allTexts.joinToString(" ").trim()
         Log.d("AKD_LISTENER", "RAW TEXT FULL: $finalText")
 
-        val amount = NotificationParser.extractAmount(finalText)
+        // 1. Parse Amount
+        val amount = NotificationParser.extractAmount(finalText) // Pastikan return Double
 
-        if (amount > 0) {
-            // --- [NEW LOGIC] CEK SUBSCRIPTION & TRIAL ---
+        if (amount > 0) { // Hanya proses jika ada angka uang valid
+
+            // --- LOGIC SUBSCRIPTION (MASIH SAMA) ---
             val sharedPref = applicationContext.getSharedPreferences("SoundHoreePrefs", Context.MODE_PRIVATE)
             val isPremium = sharedPref.getBoolean("isPremium", false)
             val trxCount = sharedPref.getInt("trxCount", 0)
-
-            // Batas Trial: 3 kali jika belum premium
             val isLimitReached = !isPremium && trxCount >= 3
-
-            // Update Counter Transaksi (Bertambah terus)
             sharedPref.edit().putInt("trxCount", trxCount + 1).apply()
-            // --------------------------------------------
+            // ---------------------------------------
 
             val cleanDisplay = finalText
-                .replace(Regex("(?i)android\\.app\\.Notification\\$[a-zA-Z]+"), "")
-                .replace(Regex("(?i)androidx\\.core\\.app\\.[a-zA-Z]+"), "")
-                .replace("$", "")
+                .replace(Regex("(?i)android\\.app\\.Notification\\$[a-zA-Z]+"), "") // Hapus sampah sistem
+                .replace("\n", " ")
                 .replace(Regex("\\s+"), " ")
                 .trim()
-                .take(60)
+                .take(100) // Ambil 100 karakter saja biar DB gak penuh
 
-            // Masukkan status 'isTrialLimited' ke object Transaction
+            // 2. Buat Object Transaksi
             val trx = Transaction(
                 sourceApp = pkgName,
-                amount = amount,
+                amount = amount, // Pastikan tipe data Double
                 rawMessage = cleanDisplay,
-                timestamp = System.currentTimeMillis(), // Pastikan ada timestamp untuk fitur auto-delete
-                isTrialLimited = isLimitReached         // Flag untuk UI Greyout & Auto Delete
+                timestamp = System.currentTimeMillis(),
+                isTrialLimited = isLimitReached
             )
 
-            scope.launch { repository.insert(trx) }
+            // --- [PERUBAHAN PENTING: HARDCODE TOKEN DULU] ---
+            // Ambil Token & UID ini dari hasil Login di Terminal / Postman tadi
+            // Nanti kalau Login Screen sudah jadi, ganti ini pakai UserSession.getToken()
 
-            // HANYA BICARA JIKA BELUM LIMIT
+            val userSession = com.app.virtualsoundbox.utils.UserSession(applicationContext)
+            val token = userSession.getToken()
+            val uid = userSession.getUserId()
+            // ------------------------------------------------
+
+            // 3. Simpan & Sync
+            scope.launch {
+                if (token != null && uid != null) {
+                    Log.d("AKD_LISTENER", "User Login ($uid). Sync ke Server...")
+                    repository.insert(trx, token, uid)
+                } else {
+                    Log.w("AKD_LISTENER", "User Belum Login / Token Null. Simpan lokal saja.")
+                    repository.insert(trx) // Parameter token & uid default-nya null (lihat Repository)
+                }
+            }
+
+            // 4. TTS Speak
             if (!isLimitReached) {
-                speak("Dana masuk, ${amount.toInt()} rupiah")
+                // Tips: Ubah format double jadi string rapi (tanpa koma desimal .0)
+                val amountString = String.format(Locale("id", "ID"), "%.0f", amount)
+                speak("Uang masuk, $amountString rupiah dari ${getSimpleAppName(pkgName)}")
             } else {
                 Log.d("AKD_LISTENER", "Trial Limit Reached. Suara dimatikan.")
             }
         }
     }
 
+    // Helper biar TTS ngomongnya enak (bukan com.package.name)
+    private fun getSimpleAppName(pkg: String): String {
+        return when {
+            pkg.contains("dana") -> "Dana"
+            pkg.contains("bca") -> "BCA"
+            pkg.contains("mandiri") -> "Livin Mandiri"
+            pkg.contains("gojek") -> "GoPay"
+            else -> "Aplikasi Lain"
+        }
+    }
     private fun speak(message: String) {
         if (isTtsReady && tts != null) {
             tts?.speak(message, TextToSpeech.QUEUE_FLUSH, null, "SoundHoreeID")
