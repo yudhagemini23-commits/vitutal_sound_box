@@ -25,4 +25,12 @@ interface SoundHoreeService {
         @Header("Authorization") token: String,
         @Body transactions: List<TransactionDto>
     ): Response<Any>
+
+    @GET("transactions")
+    suspend fun getTransactions(
+        @Header("Authorization") token: String,
+        @Query("user_id") userId: String,
+        @Query("start") start: Long,
+        @Query("end") end: Long
+    ): retrofit2.Response<List<TransactionDto>>
 }

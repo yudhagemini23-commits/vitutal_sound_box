@@ -1,6 +1,7 @@
 package com.app.virtualsoundbox
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -9,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -28,6 +30,7 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.viewmodel.compose.viewModel
 
 import com.app.virtualsoundbox.service.NotificationListener
 import com.app.virtualsoundbox.ui.auth.GoogleAuthClient
@@ -36,13 +39,16 @@ import com.app.virtualsoundbox.ui.login.LoginScreen
 import com.app.virtualsoundbox.ui.login.SignInState
 import com.app.virtualsoundbox.ui.onboarding.OnboardingScreen
 import com.app.virtualsoundbox.ui.profile.ProfileSetupScreen
+import com.app.virtualsoundbox.ui.profile.ProfileViewModel
 import com.app.virtualsoundbox.ui.theme.VirtualSoundboxTheme
+import com.app.virtualsoundbox.utils.UserSession
+import com.app.virtualsoundbox.data.remote.RetrofitClient
+import com.app.virtualsoundbox.data.remote.model.LoginRequest
 import kotlinx.coroutines.launch
 import com.google.firebase.FirebaseApp
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
-import com.app.virtualsoundbox.utils.UserSession
 
 class MainActivity : ComponentActivity() {
 
@@ -50,6 +56,7 @@ class MainActivity : ComponentActivity() {
         GoogleAuthClient(applicationContext)
     }
 
+    @SuppressLint("UseKtx")
     override fun onCreate(savedInstanceState: Bundle?) {
         val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
@@ -57,7 +64,6 @@ class MainActivity : ComponentActivity() {
         FirebaseApp.initializeApp(this)
         enableEdgeToEdge()
 
-        // Inisialisasi Session & Prefs
         val sharedPref = getSharedPreferences("SoundHoreePrefs", Context.MODE_PRIVATE)
         val userSession = UserSession(this)
 
@@ -65,24 +71,18 @@ class MainActivity : ComponentActivity() {
             VirtualSoundboxTheme {
                 val lifecycleOwner = LocalLifecycleOwner.current
                 val scope = rememberCoroutineScope()
+                val profileViewModel: ProfileViewModel = viewModel()
 
-                // --- STATES ---
                 var isNotifEnabled by remember { mutableStateOf(isNotificationServiceEnabled()) }
-
-                // 1. Cek Onboarding
                 var showOnboarding by rememberSaveable {
                     mutableStateOf(sharedPref.getBoolean("isFirstRun", true))
                 }
 
-                // 2. Cek apakah sudah Login Google
                 var userData by remember { mutableStateOf(googleAuthUiClient.getSignedInUser()) }
-
-                // 3. Cek apakah sudah Register ke Backend Golang (Punya Token)
                 var isProfileSetup by remember { mutableStateOf(userSession.isUserLoggedIn()) }
-
                 var state by remember { mutableStateOf(SignInState()) }
 
-                // --- LIFECYCLE OBSERVER ---
+                // --- LIFECYCLE ---
                 DisposableEffect(lifecycleOwner) {
                     val observer = LifecycleEventObserver { _, event ->
                         if (event == Lifecycle.Event.ON_RESUME) {
@@ -103,25 +103,45 @@ class MainActivity : ComponentActivity() {
                     onResult = { result ->
                         if (result.resultCode == RESULT_OK) {
                             lifecycleScope.launch {
+                                state = state.copy(isLoading = true)
                                 val signInResult = googleAuthUiClient.signInWithIntent(
                                     intent = result.data ?: return@launch
                                 )
+
                                 val user = signInResult.data
                                 if (user != null) {
                                     userData = user
-                                    // --- SIMPAN EMAIL DISINI ---
+                                    // PENTING: Simpan UID Google ke SharedPreferences agar tidak kosong saat diakses Screen lain
                                     sharedPref.edit()
-                                        .putString("userEmail", user.email) // Simpan Email asli Google
-                                        .putString("userName", user.userName) // Nama asli Google buat greeting
+                                        .putString("userId", user.userId)
+                                        .putString("userEmail", user.email)
+                                        .putString("userName", user.userName)
                                         .apply()
 
-                                    Toast.makeText(applicationContext, "Login Google Sukses!", Toast.LENGTH_SHORT).show()
+                                    // Cek ke Backend apakah user lama atau baru
+                                    checkUserOnBackend(
+                                        googleUid = user.userId,
+                                        email = user.email ?: "",
+                                        onResult = { isExist, storeName, token ->
+                                            if (isExist) {
+                                                userSession.saveSession(token, user.userId, user.email ?: "", storeName)
+                                                // Sync data transaksi lama
+                                                profileViewModel.registerOrLogin(storeName, user.email ?: "", "", "", user.userId)
+                                                isProfileSetup = true
+                                                Toast.makeText(applicationContext, "Selamat Datang Kembali!", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                isProfileSetup = false
+                                                Toast.makeText(applicationContext, "Lengkapi profil toko Anda", Toast.LENGTH_SHORT).show()
+                                            }
+                                            state = state.copy(isLoading = false, isSuccess = true)
+                                        },
+                                        onError = { error ->
+                                            state = state.copy(isLoading = false, signInError = error)
+                                        }
+                                    )
+                                } else {
+                                    state = state.copy(isLoading = false, signInError = signInResult.errorMessage)
                                 }
-                                state = state.copy(
-                                    isSuccess = user != null,
-                                    signInError = signInResult.errorMessage,
-                                    isLoading = false
-                                )
                             }
                         } else {
                             state = state.copy(isLoading = false)
@@ -131,25 +151,13 @@ class MainActivity : ComponentActivity() {
 
                 // --- AUTO START SERVICE ---
                 LaunchedEffect(isNotifEnabled, showOnboarding, isProfileSetup) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.POST_NOTIFICATIONS)
-                            != PackageManager.PERMISSION_GRANTED) {
-                            permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        }
-                    }
-                    // Service Aktif hanya jika: Notif Izin Aktif + Bukan Onboarding + Sudah Setup Profil (Punya Token)
                     if (isNotifEnabled && !showOnboarding && isProfileSetup) {
                         startSoundService()
                     }
                 }
 
-                // --- UI NAVIGATION FLOW ---
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     when {
-                        // LAYER 1: Onboarding (Cuma sekali seumur hidup aplikasi)
                         showOnboarding -> {
                             OnboardingScreen(
                                 isNotificationEnabled = isNotifEnabled,
@@ -161,8 +169,6 @@ class MainActivity : ComponentActivity() {
                                 onOptimizeBattery = { requestChinesePhonePermissions(this@MainActivity) }
                             )
                         }
-
-                        // LAYER 2: Google Login (Syarat awal)
                         userData == null -> {
                             LoginScreen(
                                 state = state,
@@ -173,31 +179,21 @@ class MainActivity : ComponentActivity() {
                                         if (signInIntentSender != null) {
                                             launcher.launch(IntentSenderRequest.Builder(signInIntentSender).build())
                                         } else {
-                                            state = state.copy(isLoading = false, signInError = "Gagal")
+                                            state = state.copy(isLoading = false, signInError = "Gagal Login")
                                         }
                                     }
                                 }
                             )
                         }
-
-                        // LAYER 3: Profile Setup (Register ke Backend Golang)
                         !isProfileSetup -> {
                             ProfileSetupScreen(
                                 onProfileSaved = { storeName ->
-                                    // Update nama di SharedPref untuk display Dashboard
-                                    sharedPref.edit().putString("userName", storeName).apply()
-                                    // Trigger pindah ke Dashboard
                                     isProfileSetup = true
                                 }
                             )
                         }
-
-                        // LAYER 4: Dashboard (Sudah Login & Punya Token Golang)
                         else -> {
-                            val displayStoreName = userSession.getUserId()?.let {
-                                sharedPref.getString("userName", userData?.userName)
-                            } ?: userData?.userName ?: "Juragan"
-
+                            val displayStoreName = sharedPref.getString("userName", userData?.userName) ?: "Juragan"
                             DashboardScreen(
                                 userName = displayStoreName,
                                 isNotificationEnabled = isNotifEnabled,
@@ -205,16 +201,11 @@ class MainActivity : ComponentActivity() {
                                 onOptimizeBattery = { requestChinesePhonePermissions(this@MainActivity) },
                                 onLogout = {
                                     lifecycleScope.launch {
-                                        // 1. Logout Google
                                         googleAuthUiClient.signOut()
-                                        // 2. Logout Session Golang (Hapus Token & UID)
                                         userSession.logout()
-
-                                        // Reset Local States
                                         userData = null
                                         isProfileSetup = false
                                         state = SignInState()
-
                                         Toast.makeText(applicationContext, "Berhasil Keluar", Toast.LENGTH_SHORT).show()
                                     }
                                 }
@@ -226,23 +217,51 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // --- HELPER METHODS ---
+    private fun checkUserOnBackend(
+        googleUid: String,
+        email: String,
+        onResult: (Boolean, String, String) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        lifecycleScope.launch {
+            try {
+                val request = LoginRequest(uid = googleUid, email = email, storeName = "", phoneNumber = "", category = "")
+                val response = RetrofitClient.instance.loginUser(request)
+
+                if (response.isSuccessful && response.body() != null) {
+                    val body = response.body()!!
+                    val token = body.token
+
+                    // Kita asumsikan Backend mengembalikan data User di dalam body
+                    // Jika StoreName di database tidak kosong, berarti dia user lama
+                    // (Sesuaikan dengan struktur LoginResponse Go Anda)
+                    val profileResponse = RetrofitClient.instance.getTransactions(
+                        token = "Bearer $token",
+                        userId = googleUid,
+                        start = 0,
+                        end = System.currentTimeMillis()
+                    )
+
+                    // Jika user sudah punya riwayat atau data profil (Logic bisa disesuaikan)
+                    // Disini kita anggap jika response OK, kita cek ketersediaan data profil
+                    onResult(false, "", token) // Sementara kembalikan false agar masuk Setup dulu untuk test pertama
+                } else {
+                    onError("Gagal koneksi server")
+                }
+            } catch (e: Exception) {
+                onError("Kesalahan: ${e.message}")
+            }
+        }
+    }
 
     private fun openNotificationSettings() {
-        try {
-            startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
-        } catch (e: Exception) {
-            startActivity(Intent(Settings.ACTION_SETTINGS))
-        }
+        try { startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")) }
+        catch (e: Exception) { startActivity(Intent(Settings.ACTION_SETTINGS)) }
     }
 
     private fun startSoundService() {
         val intent = Intent(this, NotificationListener::class.java)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
-        } else {
-            startService(intent)
-        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
     }
 
     private fun isNotificationServiceEnabled(): Boolean {

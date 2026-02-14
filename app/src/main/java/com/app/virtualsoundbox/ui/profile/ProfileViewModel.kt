@@ -4,13 +4,15 @@ import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.app.virtualsoundbox.data.local.AppDatabase
 import com.app.virtualsoundbox.data.remote.RetrofitClient
 import com.app.virtualsoundbox.data.remote.model.LoginRequest
+import com.app.virtualsoundbox.data.remote.model.TransactionDto
+import com.app.virtualsoundbox.model.Transaction
 import com.app.virtualsoundbox.utils.UserSession
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.util.UUID
 
 class ProfileViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -20,47 +22,70 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     private val _setupState = MutableStateFlow<SetupState>(SetupState.Idle)
     val setupState = _setupState.asStateFlow()
 
-    fun registerUser(storeName: String, email: String, phone: String, category: String) {
+    fun registerOrLogin(storeName: String, email: String, phone: String, category: String, googleUid: String) {
         _setupState.value = SetupState.Loading
-
         viewModelScope.launch {
             try {
-                // 1. Generate UID Unik untuk Instalasi ini
-                // (Nanti bisa diganti dengan UID dari Google Sign In jika sudah ada)
-                val newUid = UUID.randomUUID().toString()
                 val request = LoginRequest(
-                    uid = newUid,
+                    uid = googleUid, // Gunakan UID Google yang konsisten
                     email = email,
                     storeName = storeName,
                     phoneNumber = phone,
                     category = category
                 )
 
-                // 2. Panggil API Backend
-                Log.d("ProfileVM", "Mencoba Register: $request")
                 val response = RetrofitClient.instance.loginUser(request)
 
                 if (response.isSuccessful && response.body() != null) {
                     val token = response.body()!!.token
 
-                    // 3. Simpan Session ke HP (Permanen)
-                    userSession.saveSession(
-                        token = token,
-                        uid = newUid,
-                        email = email,
-                        storeName = storeName
-                    )
+                    // 1. Simpan Session
+                    userSession.saveSession(token, googleUid, email, storeName)
 
-                    Log.d("ProfileVM", "✅ Register Sukses! Token: $token")
+                    // 2. [KRUSIAL] Tarik data transaksi lama dari server ke Room
+                    pullTransactionsFromServer(googleUid, token)
+
                     _setupState.value = SetupState.Success
                 } else {
-                    Log.e("ProfileVM", "❌ Gagal: ${response.errorBody()?.string()}")
-                    _setupState.value = SetupState.Error("Gagal Register: ${response.message()}")
+                    _setupState.value = SetupState.Error("Gagal sinkronisasi dengan server")
                 }
             } catch (e: Exception) {
-                Log.e("ProfileVM", "🔥 Error Koneksi: ${e.message}")
-                _setupState.value = SetupState.Error("Koneksi Error: Pastikan Server Nyala")
+                _setupState.value = SetupState.Error("Koneksi bermasalah")
             }
+        }
+    }
+
+    private suspend fun pullTransactionsFromServer(uid: String, token: String) {
+        try {
+            // Panggil endpoint GET /transactions
+            val response = RetrofitClient.instance.getTransactions(
+                token = "Bearer $token",
+                userId = uid,
+                start = 0, // Ambil semua data sejarah
+                end = System.currentTimeMillis()
+            )
+
+            if (response.isSuccessful) {
+                val serverData = response.body() ?: emptyList() // Gunakan Elvis operator biar aman dari null
+
+                if (serverData.isNotEmpty()) {
+                    val localEntities = serverData.map { dto ->
+                        Transaction(
+                            sourceApp = dto.sourceApp,
+                            amount = dto.amount,
+                            rawMessage = dto.rawMessage,
+                            timestamp = dto.timestamp,
+                            isTrialLimited = dto.isTrialLimited
+                        )
+                    }
+
+                    AppDatabase.getDatabase(getApplication()).transactionDao().insertAll(localEntities)
+                    Log.d("Sync", "✅ Berhasil menarik ${localEntities.size} transaksi dari server")
+                }
+            }
+
+        } catch (e: Exception) {
+            Log.e("Sync", "Gagal tarik data: ${e.message}")
         }
     }
 }

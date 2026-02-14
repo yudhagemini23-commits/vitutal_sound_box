@@ -22,7 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel // Pastikan ada dependency ini
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.app.virtualsoundbox.data.local.AppDatabase
 import com.app.virtualsoundbox.model.UserProfile
 import com.app.virtualsoundbox.utils.UserSession
@@ -34,203 +34,120 @@ import kotlinx.coroutines.withContext
 @Composable
 fun ProfileSetupScreen(
     onProfileSaved: (String) -> Unit,
-    // Inject ViewModel di sini
     viewModel: ProfileViewModel = viewModel()
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val userSession = remember { UserSession(context) }
 
-    // 1. Ambil Data Awal (jika ada sisa login sebelumnya)
+    // Ambil Data dari SharedPreferences yang disimpan MainActivity
     val sharedPref = context.getSharedPreferences("SoundHoreePrefs", Context.MODE_PRIVATE)
+    val googleUid = sharedPref.getString("userId", "") ?: ""
     val googleEmail = sharedPref.getString("userEmail", "") ?: ""
     val googleName = sharedPref.getString("userName", "") ?: ""
 
-    // Database Room Local
     val db = AppDatabase.getDatabase(context)
     val userProfileDao = db.userProfileDao()
-
-    // Observasi State dari ViewModel (Loading, Success, Error)
     val setupState by viewModel.setupState.collectAsState()
 
-    // State Form
     var storeName by remember { mutableStateOf(googleName) }
     var phoneNumber by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf("") }
 
-    // Ganti variable isLoading manual dengan state dari ViewModel
     val isLoading = setupState is SetupState.Loading
 
-    // --- LOGIC: DENGARKAN HASIL DARI BACKEND ---
+
+
     LaunchedEffect(setupState) {
         when (setupState) {
             is SetupState.Success -> {
-                // 1. Backend Sukses, Token sudah disimpan ViewModel di UserSession
-                // 2. Sekarang kita simpan data ke Room Local (Backup Offline)
                 scope.launch {
-                    val uid = userSession.getUserId() ?: "unknown_uid"
-                    val email = "user@soundhoree.app" // Bisa diambil dari input jika ada field email
-
+                    val uid = userSession.getUserId() ?: googleUid
                     val newProfile = UserProfile(
                         uid = uid,
-                        email = email,
+                        email = googleEmail,
                         storeName = storeName,
                         phoneNumber = phoneNumber,
                         category = selectedCategory,
                         joinedAt = System.currentTimeMillis(),
-                        isSynced = true // Karena sudah sukses dari backend
+                        isSynced = true
                     )
+                    withContext(Dispatchers.IO) { userProfileDao.insert(newProfile) }
 
-                    withContext(Dispatchers.IO) {
-                        userProfileDao.insert(newProfile)
-                    }
+                    // Simpan Nama Toko ke Prefs untuk Dashboard
+                    sharedPref.edit().putString("userName", storeName).apply()
 
-                    Toast.makeText(context, "Profil Tersimpan & Online!", Toast.LENGTH_SHORT).show()
-                    onProfileSaved(storeName) // Pindah ke Home
+                    Toast.makeText(context, "Profil Berhasil Disinkronkan!", Toast.LENGTH_SHORT).show()
+                    onProfileSaved(storeName)
                 }
             }
             is SetupState.Error -> {
-                val errorMsg = (setupState as SetupState.Error).message
-                Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show()
+                Toast.makeText(context, (setupState as SetupState.Error).message, Toast.LENGTH_LONG).show()
             }
             else -> {}
         }
     }
 
-    val categories = listOf(
-        "Kuliner (Makanan/Minuman)",
-        "Retail / Kelontong",
-        "Fashion / Pakaian",
-        "Jasa / Service",
-        "Digital / Pulsa / PPOB",
-        "Lainnya"
-    )
+    val categories = listOf("Kuliner", "Retail", "Fashion", "Jasa", "Digital", "Lainnya")
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Lengkapi Profil Usaha") },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = Color(0xFFF8F9FA))
-            )
-        }
+        topBar = { TopAppBar(title = { Text("Lengkapi Profil Usaha") }) }
     ) { padding ->
         Column(
-            modifier = Modifier
-                .padding(padding)
-                .fillMaxSize()
-                .padding(24.dp)
-                .verticalScroll(rememberScrollState()),
+            modifier = Modifier.padding(padding).fillMaxSize().padding(24.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Informasi Header
-            Card(
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFE3F2FD)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        "Halo Juragan! Data ini akan disinkronkan ke server agar aman jika ganti HP.",
-                        fontSize = 14.sp,
-                        color = Color(0xFF0D47A1)
-                    )
-                }
+            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFE3F2FD))) {
+                Text("Halo Juragan $googleName! Silakan lengkapi profil toko Anda.", modifier = Modifier.padding(16.dp))
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // 1. Input Nama Toko
             OutlinedTextField(
                 value = storeName,
                 onValueChange = { storeName = it },
-                label = { Text("Nama Toko / Usaha") },
+                label = { Text("Nama Toko") },
                 leadingIcon = { Icon(Icons.Default.Store, null) },
                 modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
                 enabled = !isLoading
             )
 
-            // 2. Input Nomor HP
             OutlinedTextField(
                 value = phoneNumber,
-                onValueChange = { if (it.all { char -> char.isDigit() }) phoneNumber = it },
-                label = { Text("Nomor WhatsApp / HP") },
+                onValueChange = { if (it.all { c -> c.isDigit() }) phoneNumber = it },
+                label = { Text("Nomor WhatsApp") },
                 leadingIcon = { Icon(Icons.Default.Phone, null) },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                 modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                placeholder = { Text("0812...") },
                 enabled = !isLoading
             )
 
-            // 3. Pilihan Kategori
-            Text("Kategori Bisnis", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
-            Card(
-                colors = CardDefaults.cardColors(containerColor = Color.White),
-                elevation = CardDefaults.cardElevation(1.dp),
-                border = BorderStroke(1.dp, Color(0xFFEEEEEE))
-            ) {
-                Column {
-                    categories.forEach { category ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .selectable(
-                                    selected = (selectedCategory == category),
-                                    onClick = { if (!isLoading) selectedCategory = category }
-                                )
-                                .padding(horizontal = 16.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RadioButton(
-                                selected = (selectedCategory == category),
-                                onClick = null,
-                                colors = RadioButtonDefaults.colors(selectedColor = Color(0xFF2E7D32)),
-                                enabled = !isLoading
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(text = category, fontSize = 14.sp)
-                        }
-                        if (category != categories.last()) {
-                            Divider(color = Color(0xFFF5F5F5))
-                        }
-                    }
+            Text("Kategori Bisnis", fontWeight = FontWeight.Bold)
+            categories.forEach { category ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().selectable(
+                        selected = (selectedCategory == category),
+                        onClick = { if (!isLoading) selectedCategory = category }
+                    ).padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(selected = (selectedCategory == category), onClick = null)
+                    Text(text = category, modifier = Modifier.padding(start = 8.dp))
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // 4. Tombol Simpan
             Button(
                 onClick = {
-                    if (storeName.isBlank() || phoneNumber.isBlank() || selectedCategory.isBlank()) {
-                        Toast.makeText(context, "Mohon lengkapi semua data!", Toast.LENGTH_SHORT).show()
+                    if (storeName.isBlank() || phoneNumber.isBlank() || googleUid.isBlank()) {
+                        Toast.makeText(context, "Data tidak lengkap / UID error!", Toast.LENGTH_SHORT).show()
                     } else {
-                        // --- INTEGRASI BACKEND ---
-                        viewModel.registerUser(
-                            storeName = storeName,
-                            email = googleEmail,
-                            phone = phoneNumber,
-                            category = selectedCategory // SEKARANG TERKIRIM
-                        )
+                        viewModel.registerOrLogin(storeName, googleEmail, phoneNumber, selectedCategory, googleUid)
                     }
                 },
                 modifier = Modifier.fillMaxWidth().height(56.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
-                shape = MaterialTheme.shapes.medium,
                 enabled = !isLoading
             ) {
-                if (isLoading) {
-                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp))
-                } else {
-                    Text("Simpan & Onlinekan", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Icon(Icons.Default.Check, null)
-                }
+                if (isLoading) CircularProgressIndicator(color = Color.White)
+                else Text("Simpan & Lanjutkan")
             }
-            Spacer(modifier = Modifier.height(50.dp))
         }
     }
 }
