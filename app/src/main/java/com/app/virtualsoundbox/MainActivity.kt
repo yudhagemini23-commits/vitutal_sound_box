@@ -67,27 +67,31 @@ class MainActivity : ComponentActivity() {
         FirebaseApp.initializeApp(this)
         enableEdgeToEdge()
 
-        val sharedPref = getSharedPreferences("SoundHoreePrefs", Context.MODE_PRIVATE)
         val userSession = UserSession(this)
+        val sharedPref = getSharedPreferences("SoundHoreePrefs", Context.MODE_PRIVATE)
 
         setContent {
             VirtualSoundboxTheme {
                 val lifecycleOwner = LocalLifecycleOwner.current
-                val scope = rememberCoroutineScope()
                 val profileViewModel: ProfileViewModel = viewModel()
 
                 var isNotifEnabled by remember { mutableStateOf(isNotificationServiceEnabled()) }
+
+                // --- GATE 1: ONBOARDING ---
                 var showOnboarding by rememberSaveable {
                     mutableStateOf(sharedPref.getBoolean("isFirstRun", true))
                 }
 
+                // --- GATE 2: LOGIN STATE (Gunakan UserSession, bukan Google Client) ---
+                var isLoggedIn by remember { mutableStateOf(userSession.isUserLoggedIn()) }
+
+                // --- GATE 3: PROFILE SETUP ---
+                var isProfileSetup by remember { mutableStateOf(userSession.isUserLoggedIn()) }
+
+                var state by remember { mutableStateOf(SignInState()) }
                 var userData by remember { mutableStateOf(googleAuthUiClient.getSignedInUser()) }
 
-                // Menentukan apakah user sudah setup berdasarkan data lokal (Session Manager)
-                var isProfileSetup by remember { mutableStateOf(userSession.isUserLoggedIn()) }
-                var state by remember { mutableStateOf(SignInState()) }
-
-                // --- LIFECYCLE ---
+                // --- LIFECYCLE OBSERVER ---
                 DisposableEffect(lifecycleOwner) {
                     val observer = LifecycleEventObserver { _, event ->
                         if (event == Lifecycle.Event.ON_RESUME) {
@@ -98,11 +102,7 @@ class MainActivity : ComponentActivity() {
                     onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
                 }
 
-                // --- LAUNCHERS ---
-                val permissionLauncher = rememberLauncherForActivityResult(
-                    contract = ActivityResultContracts.RequestPermission()
-                ) { }
-
+                // --- GOOGLE SIGN IN LAUNCHER ---
                 val launcher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.StartIntentSenderForResult(),
                     onResult = { result ->
@@ -116,32 +116,23 @@ class MainActivity : ComponentActivity() {
                                 val user = signInResult.data
                                 if (user != null) {
                                     userData = user
-                                    // 1. Simpan UID Google ke SharedPreferences
-                                    sharedPref.edit()
-                                        .putString("userId", user.userId)
-                                        .putString("userEmail", user.email)
-                                        .putString("userName", user.userName)
-                                        .apply()
-
-                                    // 2. CEK KE BACKEND GOLANG (Idempotent Login)
                                     checkUserOnBackend(
                                         googleUid = user.userId,
                                         email = user.email ?: "",
                                         onResult = { isExist, storeName, token ->
                                             if (isExist) {
-                                                // USER LAMA: Simpan session & langsung Dashboard
+                                                // Simpan session permanen
                                                 userSession.saveSession(token, user.userId, user.email ?: "", storeName)
-                                                sharedPref.edit().putString("userName", storeName).apply()
-
-                                                // Sync data dari server ke Room
+                                                // Sync data transaksi
                                                 profileViewModel.registerOrLogin(storeName, user.email ?: "", "", "", user.userId)
 
+                                                isLoggedIn = true
                                                 isProfileSetup = true
                                                 Toast.makeText(applicationContext, "Selamat Datang Kembali!", Toast.LENGTH_SHORT).show()
                                             } else {
-                                                // USER BARU: Masuk ke Setup Profil
                                                 isProfileSetup = false
-                                                Toast.makeText(applicationContext, "Lengkapi profil toko Anda", Toast.LENGTH_SHORT).show()
+                                                // User login Google sukses tapi profil belum ada di MySQL
+                                                isLoggedIn = true
                                             }
                                             state = state.copy(isLoading = false, isSuccess = true)
                                         },
@@ -160,8 +151,8 @@ class MainActivity : ComponentActivity() {
                 )
 
                 // --- AUTO START SERVICE ---
-                LaunchedEffect(isNotifEnabled, showOnboarding, isProfileSetup) {
-                    if (isNotifEnabled && !showOnboarding && isProfileSetup) {
+                LaunchedEffect(isNotifEnabled, showOnboarding, isLoggedIn, isProfileSetup) {
+                    if (isNotifEnabled && !showOnboarding && isLoggedIn && isProfileSetup) {
                         startSoundService()
                     }
                 }
@@ -179,7 +170,7 @@ class MainActivity : ComponentActivity() {
                                 onOptimizeBattery = { requestChinesePhonePermissions(this@MainActivity) }
                             )
                         }
-                        userData == null -> {
+                        !isLoggedIn -> {
                             LoginScreen(
                                 state = state,
                                 onSignInClick = {
@@ -203,9 +194,9 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         else -> {
-                            val displayStoreName = sharedPref.getString("userName", userData?.userName) ?: "Juragan"
+                            // Dashboard Utama
                             DashboardScreen(
-                                userName = displayStoreName,
+                                userName = userSession.getUserId() ?: "Juragan",
                                 isNotificationEnabled = isNotifEnabled,
                                 onOpenNotificationSettings = { openNotificationSettings() },
                                 onOptimizeBattery = { requestChinesePhonePermissions(this@MainActivity) },
@@ -213,7 +204,6 @@ class MainActivity : ComponentActivity() {
                                     lifecycleScope.launch {
                                         googleAuthUiClient.signOut()
                                         userSession.logout()
-                                        sharedPref.edit().clear().apply()
 
                                         withContext(Dispatchers.IO) {
                                             val db = AppDatabase.getDatabase(this@MainActivity)
@@ -222,6 +212,7 @@ class MainActivity : ComponentActivity() {
                                         }
 
                                         userData = null
+                                        isLoggedIn = false
                                         isProfileSetup = false
                                         state = SignInState()
 
@@ -237,16 +228,15 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Fungsi Inti: Cek apakah profil sudah ada di MySQL Backend
+     * Sinkronisasi data premium dan trial dari MySQL Backend
      */
-    @SuppressLint("UseKtx")
     private fun checkUserOnBackend(
         googleUid: String,
         email: String,
         onResult: (Boolean, String, String) -> Unit,
         onError: (String) -> Unit
     ) {
-        val sharedPref = getSharedPreferences("SoundHoreePrefs", Context.MODE_PRIVATE)
+        val userSession = UserSession(this)
         lifecycleScope.launch {
             try {
                 val request = LoginRequest(uid = googleUid, email = email, storeName = "", phoneNumber = "", category = "")
@@ -257,12 +247,13 @@ class MainActivity : ComponentActivity() {
                     val profile = authBody.user
                     val sub = authBody.subscription
 
-                    // --- SIMPAN INFO TRIAL DARI BACKEND ---
+                    // --- [SINKRONISASI KRUSIAL] ---
+                    // Simpan status premium dan trial asli dari MySQL ke SharedPreferences lokal
                     if (sub != null) {
-                        sharedPref.edit()
-                            .putInt("remainingTrial", sub.remainingTrial)
-                            .putBoolean("isPremium", sub.isPremium)
-                            .apply()
+                        userSession.savePremiumStatus(
+                            isPremium = sub.isPremium,
+                            remainingTrial = sub.remainingTrial
+                        )
                     }
 
                     val isExist = !profile?.storeName.isNullOrBlank()

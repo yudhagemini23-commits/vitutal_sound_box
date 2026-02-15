@@ -28,7 +28,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             try {
                 val request = LoginRequest(
-                    uid = googleUid, // Gunakan UID Google yang konsisten
+                    uid = googleUid,
                     email = email,
                     storeName = storeName,
                     phoneNumber = phone,
@@ -38,15 +38,25 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                 val response = RetrofitClient.instance.loginUser(request)
 
                 if (response.isSuccessful && response.body() != null) {
-                    val token = response.body()!!.token
+                    val authData = response.body()!!
+                    val token = authData.token
 
-                    // 1. Simpan Session
+                    // 1. Simpan Session Dasar (UID, Email, Token)
                     userSession.saveSession(token, googleUid, email, storeName)
 
-                    // 2. [KRUSIAL] Tarik data transaksi lama dari server ke Room
-                    pullTransactionsFromServer(googleUid, token)
+                    // 2. [SOLUSI] Update status Premium & Trial dari hasil login
+                    val sub = authData.subscription
+                    if (sub != null) {
+                        // Simpan data ke SharedPreferences agar Dashboard langsung update
+                        userSession.savePremiumStatus(
+                            isPremium = sub.isPremium,
+                            remainingTrial = sub.remainingTrial
+                        )
+                    }
 
+                    pullTransactionsFromServer(googleUid, token)
                     _setupState.value = SetupState.Success
+
                 } else {
                     _setupState.value = SetupState.Error("Gagal sinkronisasi dengan server")
                 }
