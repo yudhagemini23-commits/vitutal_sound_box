@@ -250,11 +250,15 @@ class MainActivity : ComponentActivity() {
                     // --- [SINKRONISASI KRUSIAL] ---
                     // Simpan status premium dan trial asli dari MySQL ke SharedPreferences lokal
                     if (sub != null) {
-                        userSession.savePremiumStatus(
-                            isPremium = sub.isPremium,
-                            remainingTrial = sub.remainingTrial
-                        )
+                        userSession.savePremiumStatus(sub.isPremium, sub.remainingTrial)
                     }
+
+                    userSession.saveSession(
+                        token = authBody.token,
+                        uid = googleUid,
+                        email = email,
+                        storeName = profile?.storeName ?: ""
+                    )
 
                     val isExist = !profile?.storeName.isNullOrBlank()
                     onResult(isExist, profile?.storeName ?: "", authBody.token)

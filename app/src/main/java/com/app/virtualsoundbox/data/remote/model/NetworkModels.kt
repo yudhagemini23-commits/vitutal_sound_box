@@ -19,10 +19,12 @@ data class AuthResponse(
 
 data class UserProfileDto(
     @SerializedName("uid") val uid: String,
-    @SerializedName("store_name") val storeName: String?,
     @SerializedName("email") val email: String?,
+    @SerializedName("store_name") val storeName: String?,
     @SerializedName("phone_number") val phoneNumber: String?,
-    @SerializedName("category") val category: String?
+    @SerializedName("category") val category: String?,
+    @SerializedName("joined_at") val joinedAt: Long, // Tambahkan ini (WAJIB Long)
+    @SerializedName("is_premium") val isPremium: Boolean // Tambahkan ini
 )
 
 data class TransactionDto(

@@ -38,6 +38,7 @@ class UserSession(context: Context) {
     fun isPremium(): Boolean = prefs.getBoolean(KEY_IS_PREMIUM, false)
     fun getRemainingTrial(): Int = prefs.getInt(KEY_REMAINING_TRIAL, 0)
     fun getStoreName(): String? = prefs.getString(KEY_STORE_NAME, null)
+    fun getUserEmail(): String? = prefs.getString(KEY_EMAIL, null)
     fun getToken(): String? = prefs.getString(KEY_TOKEN, null)
     fun getUserId(): String? = prefs.getString(KEY_UID, null)
     fun isUserLoggedIn(): Boolean = getToken() != null && getUserId() != null

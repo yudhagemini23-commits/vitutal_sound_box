@@ -42,15 +42,15 @@ fun ProfileSetupScreen(
 
     // Ambil Data dari SharedPreferences yang disimpan MainActivity
     val sharedPref = context.getSharedPreferences("SoundHoreePrefs", Context.MODE_PRIVATE)
-    val googleUid = sharedPref.getString("userId", "") ?: ""
-    val googleEmail = sharedPref.getString("userEmail", "") ?: ""
-    val googleName = sharedPref.getString("userName", "") ?: ""
+    val googleUid = userSession.getUserId() ?: ""
+    val googleEmail = userSession.getUserEmail() ?: ""
+    val googleName = userSession.getStoreName() ?: ""
 
     val db = AppDatabase.getDatabase(context)
     val userProfileDao = db.userProfileDao()
     val setupState by viewModel.setupState.collectAsState()
 
-    var storeName by remember { mutableStateOf(googleName) }
+    var storeName by remember { mutableStateOf(userSession.getStoreName() ?: "") }
     var phoneNumber by remember { mutableStateOf("") }
     var selectedCategory by remember { mutableStateOf("") }
 
@@ -136,6 +136,7 @@ fun ProfileSetupScreen(
 
             Button(
                 onClick = {
+                    android.util.Log.d("AKD_DEBUG", "UID: $googleUid, Email: $googleEmail")
                     if (storeName.isBlank() || phoneNumber.isBlank() || googleUid.isBlank()) {
                         Toast.makeText(context, "Data tidak lengkap / UID error!", Toast.LENGTH_SHORT).show()
                     } else {

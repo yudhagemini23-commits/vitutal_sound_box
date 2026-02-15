@@ -206,7 +206,9 @@ fun DashboardScreen(
                 onSubscribeSuccess = { plan ->
                     // HIT API BACKEND UNTUK UPGRADE
 //                    profileViewModel.upgradePremium(plan, userSession.getUserId() ?: "")
+                    val uid = userSession.getUserId() ?: ""
                     userSession.savePremiumStatus(isPremium = true, remainingTrial = 0)
+                    profileViewModel.upgradePremium(plan, uid)
                     viewModel.unlockHistory()
                 }
             )
