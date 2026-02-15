@@ -205,7 +205,9 @@ fun DashboardScreen(
                 onDismiss = { if (remainingTrial > 0) showSubscriptionPopup = false },
                 onSubscribeSuccess = { plan ->
                     // HIT API BACKEND UNTUK UPGRADE
-                    profileViewModel.upgradePremium(plan, userSession.getUserId() ?: "")
+//                    profileViewModel.upgradePremium(plan, userSession.getUserId() ?: "")
+                    userSession.savePremiumStatus(isPremium = true, remainingTrial = 0)
+                    viewModel.unlockHistory()
                 }
             )
         }

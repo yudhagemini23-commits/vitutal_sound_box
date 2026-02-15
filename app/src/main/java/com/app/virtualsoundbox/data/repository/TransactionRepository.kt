@@ -11,13 +11,23 @@ import kotlinx.coroutines.withContext
 
 class TransactionRepository(private val transactionDao: TransactionDao) {
 
-    // --- KODE LAMA MAS (TETAP AMAN) ---
-
     val allTransactions: Flow<List<Transaction>> = transactionDao.getAllTransactions()
 
     fun getTransactionsByDateRange(start: Long, end: Long): Flow<List<Transaction>> {
         return transactionDao.getTransactionsByDateRange(start, end)
     }
+
+    // --- FUNGSI BARU ---
+
+    fun getTotalIncomeByRange(start: Long, end: Long): Flow<Double?> {
+        return transactionDao.getTotalIncomeByRange(start, end)
+    }
+
+    suspend fun unlockAll() {
+        transactionDao.unlockAllTransactions()
+    }
+
+    // --- KODE LAMA TETAP AMAN ---
 
     suspend fun deleteTransaction(transaction: Transaction) {
         transactionDao.deleteTransaction(transaction)
@@ -27,27 +37,16 @@ class TransactionRepository(private val transactionDao: TransactionDao) {
         transactionDao.deleteExpiredLimitedTransactions(time)
     }
 
-    // --- FUNGSI INSERT YANG DI-UPGRADE ---
-
-    /**
-     * Insert data ke database HP.
-     * Jika ada internet + token + userId, otomatis coba kirim ke server Golang.
-     */
     suspend fun insert(transaction: Transaction, userToken: String? = null, userId: String? = null) {
-        // 1. Simpan ke Local Room dulu (Wajib sukses biar data aman di HP)
         transactionDao.insert(transaction)
-
-        // 2. Coba Sync ke Backend (Fire & Forget)
         if (userToken != null && userId != null) {
             syncToBackend(transaction, userToken, userId)
         }
     }
 
-    // Fungsi Private: Logika kirim ke Retrofit
     private suspend fun syncToBackend(trx: Transaction, token: String, userId: String) {
         withContext(Dispatchers.IO) {
             try {
-                // Convert Model Room -> Model Network (DTO)
                 val dto = TransactionDto(
                     userId = userId,
                     sourceApp = trx.sourceApp,
@@ -56,21 +55,15 @@ class TransactionRepository(private val transactionDao: TransactionDao) {
                     timestamp = trx.timestamp,
                     isTrialLimited = trx.isTrialLimited
                 )
-
-                // Panggil API (Kirim sebagai List)
                 val response = RetrofitClient.instance.syncTransactions(
                     token = "Bearer $token",
                     transactions = listOf(dto)
                 )
-
                 if (response.isSuccessful) {
-                    Log.d("SoundHoreeSync", "✅ Sync Berhasil: Rp ${trx.amount}")
-                } else {
-                    Log.e("SoundHoreeSync", "❌ Gagal Sync: Code ${response.code()}")
+                    Log.d("SoundHoreeSync", "✅ Sync Berhasil")
                 }
             } catch (e: Exception) {
-                // Error koneksi jangan sampai bikin app crash
-                Log.e("SoundHoreeSync", "🔥 Offline / Error Network: ${e.message}")
+                Log.e("SoundHoreeSync", "🔥 Error Network: ${e.message}")
             }
         }
     }
