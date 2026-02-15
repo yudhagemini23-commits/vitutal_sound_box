@@ -12,34 +12,35 @@ class UserSession(context: Context) {
         private const val KEY_UID = "user_uid"
         private const val KEY_EMAIL = "user_email"
         private const val KEY_STORE_NAME = "store_name"
+        private const val KEY_IS_PREMIUM = "isPremium"
+        private const val KEY_REMAINING_TRIAL = "remaining_trial"
     }
 
-    // Simpan Data saat Login Sukses
     fun saveSession(token: String, uid: String, email: String, storeName: String) {
-        val editor = prefs.edit()
-        editor.putString(KEY_TOKEN, token)
-        editor.putString(KEY_UID, uid)
-        editor.putString(KEY_EMAIL, email)
-        editor.putString(KEY_STORE_NAME, storeName)
-        editor.apply()
+        prefs.edit().apply {
+            putString(KEY_TOKEN, token)
+            putString(KEY_UID, uid)
+            putString(KEY_EMAIL, email)
+            putString(KEY_STORE_NAME, storeName)
+            apply()
+        }
     }
 
-    // Ambil Token
-    fun getToken(): String? {
-        return prefs.getString(KEY_TOKEN, null)
+    // Update status dari Backend
+    fun savePremiumStatus(isPremium: Boolean, remainingTrial: Int = 0) {
+        prefs.edit().apply {
+            putBoolean(KEY_IS_PREMIUM, isPremium)
+            putInt(KEY_REMAINING_TRIAL, remainingTrial)
+            apply()
+        }
     }
 
-    // Ambil User ID
-    fun getUserId(): String? {
-        return prefs.getString(KEY_UID, null)
-    }
+    fun isPremium(): Boolean = prefs.getBoolean(KEY_IS_PREMIUM, false)
+    fun getRemainingTrial(): Int = prefs.getInt(KEY_REMAINING_TRIAL, 0)
+    fun getToken(): String? = prefs.getString(KEY_TOKEN, null)
+    fun getUserId(): String? = prefs.getString(KEY_UID, null)
+    fun isUserLoggedIn(): Boolean = getToken() != null && getUserId() != null
 
-    // Cek apakah User sudah Login
-    fun isUserLoggedIn(): Boolean {
-        return getToken() != null && getUserId() != null
-    }
-
-    // Logout (Hapus Data)
     fun logout() {
         prefs.edit().clear().apply()
     }

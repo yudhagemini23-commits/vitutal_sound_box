@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.speech.tts.TextToSpeech
@@ -18,6 +19,7 @@ import com.app.virtualsoundbox.data.local.AppDatabase
 import com.app.virtualsoundbox.data.repository.TransactionRepository
 import com.app.virtualsoundbox.model.Transaction
 import com.app.virtualsoundbox.utils.NotificationParser
+import com.app.virtualsoundbox.utils.UserSession
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -51,13 +53,11 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
         startAsForeground()
     }
 
-    // --- PERUBAHAN DISINI: Agar service tetap hidup (Sticky) ---
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startAsForeground()
         return START_STICKY
     }
 
-    // --- PERUBAHAN DISINI: Memicu restart jika aplikasi di-swipe dari recents ---
     override fun onTaskRemoved(rootIntent: Intent?) {
         val restartServiceIntent = Intent(applicationContext, this.javaClass)
         restartServiceIntent.setPackage(packageName)
@@ -65,28 +65,23 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
             applicationContext, 1, restartServiceIntent,
             PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
         )
-        // Opsional: Jika HP sangat agresif, bisa pakai AlarmManager di sini
         super.onTaskRemoved(rootIntent)
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         val notification = sbn?.notification ?: return
-        val pkgName = sbn.packageName ?: "" // Perbaikan: Handle null safety
+        val pkgName = sbn.packageName ?: ""
 
-        // Cek apakah paket aplikasi ada di daftar target
-        // (Logic Mas sebelumnya pakai .any { contains } sudah oke, tapi ini lebih aman)
         val isTarget = TARGET_APPS.any { pkgName.contains(it, ignoreCase = true) }
         if (!isTarget) return
 
         val extras = notification.extras
         val allTexts = mutableListOf<String>()
 
-        // Ambil Title & Text
         extras.getCharSequence("android.title")?.let { allTexts.add(it.toString()) }
         extras.getCharSequence("android.text")?.let { allTexts.add(it.toString()) }
         extras.getCharSequence("android.bigText")?.let { allTexts.add(it.toString()) }
 
-        // Fallback ke strategi lama Mas jika null
         if (allTexts.isEmpty()) {
             for (key in extras.keySet()) {
                 val value = extras.get(key)
@@ -97,69 +92,67 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
         }
 
         val finalText = allTexts.joinToString(" ").trim()
-        Log.d("AKD_LISTENER", "RAW TEXT FULL: $finalText")
+        val amount = NotificationParser.extractAmount(finalText)
 
-        // 1. Parse Amount
-        val amount = NotificationParser.extractAmount(finalText) // Pastikan return Double
+        if (amount > 0) {
+            // --- PERBAIKAN LOGIC SUBSCRIPTION: SOURCE FROM BACKEND (via UserSession) ---
+            val userSession = UserSession(applicationContext)
+            val isPremium = userSession.isPremium()
+            val currentRemaining = userSession.getRemainingTrial()
 
-        if (amount > 0) { // Hanya proses jika ada angka uang valid
 
-            // --- LOGIC SUBSCRIPTION (MASIH SAMA) ---
-            val sharedPref = applicationContext.getSharedPreferences("SoundHoreePrefs", Context.MODE_PRIVATE)
-            val isPremium = sharedPref.getBoolean("isPremium", false)
-            val trxCount = sharedPref.getInt("trxCount", 0)
-            val isLimitReached = !isPremium && trxCount >= 3
-            sharedPref.edit().putInt("trxCount", trxCount + 1).apply()
-            // ---------------------------------------
+            // Suara hanya bunyi jika: USER PREMIUM atau TRIAL MASIH ADA (> 0)
+            val canPlaySound = isPremium || currentRemaining > 0
+            val isLimitReached = !canPlaySound
+
+            // Update jatah trial secara lokal (Optimistic Update)
+            // Agar jika ada 2 notifikasi beruntun, notifikasi kedua tahu trial sudah berkurang
+            if (!isPremium && currentRemaining > 0) {
+                // PERBAIKAN: Gunakan 'remainingTrial' bukan 'remaining'
+                userSession.savePremiumStatus(
+                    isPremium = false,
+                    remainingTrial = currentRemaining - 1
+                )
+            }
+            // ---------------------------------------------------------------------------
 
             val cleanDisplay = finalText
-                .replace(Regex("(?i)android\\.app\\.Notification\\$[a-zA-Z]+"), "") // Hapus sampah sistem
+                .replace(Regex("(?i)android\\.app\\.Notification\\$[a-zA-Z]+"), "")
                 .replace("\n", " ")
                 .replace(Regex("\\s+"), " ")
                 .trim()
-                .take(100) // Ambil 100 karakter saja biar DB gak penuh
+                .take(100)
 
-            // 2. Buat Object Transaksi
             val trx = Transaction(
                 sourceApp = pkgName,
-                amount = amount, // Pastikan tipe data Double
+                amount = amount,
                 rawMessage = cleanDisplay,
                 timestamp = System.currentTimeMillis(),
-                isTrialLimited = isLimitReached
+                isTrialLimited = isLimitReached // Status 'LOCKED' ditentukan di sini
             )
 
-            // --- [PERUBAHAN PENTING: HARDCODE TOKEN DULU] ---
-            // Ambil Token & UID ini dari hasil Login di Terminal / Postman tadi
-            // Nanti kalau Login Screen sudah jadi, ganti ini pakai UserSession.getToken()
-
-            val userSession = com.app.virtualsoundbox.utils.UserSession(applicationContext)
             val token = userSession.getToken()
             val uid = userSession.getUserId()
-            // ------------------------------------------------
 
-            // 3. Simpan & Sync
             scope.launch {
                 if (token != null && uid != null) {
-                    Log.d("AKD_LISTENER", "User Login ($uid). Sync ke Server...")
+                    // Sync ke MySQL Backend (Tabel Transactions)
                     repository.insert(trx, token, uid)
                 } else {
-                    Log.w("AKD_LISTENER", "User Belum Login / Token Null. Simpan lokal saja.")
-                    repository.insert(trx) // Parameter token & uid default-nya null (lihat Repository)
+                    repository.insert(trx)
                 }
             }
 
-            // 4. TTS Speak
-            if (!isLimitReached) {
-                // Tips: Ubah format double jadi string rapi (tanpa koma desimal .0)
+            // --- TTS SPEAK LOGIC ---
+            if (canPlaySound) {
                 val amountString = String.format(Locale("id", "ID"), "%.0f", amount)
                 speak("Uang masuk, $amountString rupiah dari ${getSimpleAppName(pkgName)}")
             } else {
-                Log.d("AKD_LISTENER", "Trial Limit Reached. Suara dimatikan.")
+                Log.d("AKD_LISTENER", "Trial Habis & Belum Premium. Suara diblokir.")
             }
         }
     }
 
-    // Helper biar TTS ngomongnya enak (bukan com.package.name)
     private fun getSimpleAppName(pkg: String): String {
         return when {
             pkg.contains("dana") -> "Dana"
@@ -169,11 +162,12 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
             else -> "Aplikasi Lain"
         }
     }
+
     private fun speak(message: String) {
         if (isTtsReady && tts != null) {
             tts?.speak(message, TextToSpeech.QUEUE_FLUSH, null, "SoundHoreeID")
         } else {
-            Log.e("AKD_LISTENER", "TTS belum siap untuk bicara.")
+            Log.e("AKD_LISTENER", "TTS belum siap.")
         }
     }
 
@@ -182,10 +176,7 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
             val localeId = Locale("id", "ID")
             val result = tts?.setLanguage(localeId)
             if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                val altResult = tts?.setLanguage(Locale("in", "ID"))
-                if (altResult == TextToSpeech.LANG_MISSING_DATA || altResult == TextToSpeech.LANG_NOT_SUPPORTED) {
-                    tts?.setLanguage(Locale.US)
-                }
+                tts?.setLanguage(Locale.US)
             }
             isTtsReady = true
         }
@@ -221,7 +212,7 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
             .setContentText("Siap mendengarkan notifikasi uang masuk...")
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentIntent(pendingIntent)
-            .setOngoing(true) // Notifikasi tidak bisa di-swipe
+            .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
 

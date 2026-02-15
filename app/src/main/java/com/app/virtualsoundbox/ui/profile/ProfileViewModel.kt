@@ -8,6 +8,7 @@ import com.app.virtualsoundbox.data.local.AppDatabase
 import com.app.virtualsoundbox.data.remote.RetrofitClient
 import com.app.virtualsoundbox.data.remote.model.LoginRequest
 import com.app.virtualsoundbox.data.remote.model.TransactionDto
+import com.app.virtualsoundbox.data.remote.model.UpgradeRequest
 import com.app.virtualsoundbox.model.Transaction
 import com.app.virtualsoundbox.utils.UserSession
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -86,6 +87,29 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
 
         } catch (e: Exception) {
             Log.e("Sync", "Gagal tarik data: ${e.message}")
+        }
+    }
+
+    fun upgradePremium(planType: String, googleUid: String) {
+        _setupState.value = SetupState.Loading
+        viewModelScope.launch {
+            try {
+                val token = userSession.getToken() ?: ""
+                val response = RetrofitClient.instance.upgradeToPremium(
+                    token = "Bearer $token",
+                    request = UpgradeRequest(userId = googleUid, planType = planType.lowercase())
+                )
+
+                if (response.isSuccessful) {
+                    // --- PERBAIKAN: Parameter sekarang sudah sesuai dengan UserSession ---
+                    userSession.savePremiumStatus(isPremium = true, remainingTrial = 0)
+                    _setupState.value = SetupState.Success
+                } else {
+                    _setupState.value = SetupState.Error("Verifikasi server gagal")
+                }
+            } catch (e: Exception) {
+                _setupState.value = SetupState.Error("Koneksi bermasalah")
+            }
         }
     }
 }

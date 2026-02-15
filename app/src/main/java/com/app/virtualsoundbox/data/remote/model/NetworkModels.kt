@@ -40,3 +40,13 @@ data class SubscriptionDto(
     @SerializedName("trial_usage") val trialUsage: Int,
     @SerializedName("remaining_trial") val remainingTrial: Int
 )
+
+data class UpgradeRequest(
+    @SerializedName("user_id") val userId: String,
+    @SerializedName("plan_type") val planType: String
+)
+
+data class UpgradeResponse(
+    @SerializedName("status") val status: String,
+    @SerializedName("expiry_date") val expiryDate: Long
+)

@@ -3,6 +3,8 @@ package com.app.virtualsoundbox.data.remote.api
 import com.app.virtualsoundbox.data.remote.model.LoginRequest
 import com.app.virtualsoundbox.data.remote.model.AuthResponse
 import com.app.virtualsoundbox.data.remote.model.TransactionDto
+import com.app.virtualsoundbox.data.remote.model.UpgradeRequest
+import com.app.virtualsoundbox.data.remote.model.UpgradeResponse
 import retrofit2.Response
 import retrofit2.http.*
 
@@ -32,5 +34,11 @@ interface SoundHoreeService {
         @Query("user_id") userId: String,
         @Query("start") start: Long,
         @Query("end") end: Long
-    ): retrofit2.Response<List<TransactionDto>>
+    ): Response<List<TransactionDto>>
+
+    @POST("subscription/upgrade")
+    suspend fun upgradeToPremium(
+        @Header("Authorization") token: String,
+        @Body request: UpgradeRequest
+    ): Response<UpgradeResponse>
 }
