@@ -22,4 +22,7 @@ interface UserProfileDao {
     // Fungsi untuk mengambil semua data profil yang tersimpan di HP
     @Query("SELECT * FROM user_profile ORDER BY joinedAt DESC LIMIT 1")
     fun getAllProfiles(): List<UserProfile>
+
+    @Query("DELETE FROM user_profile")
+    suspend fun deleteAllProfiles()
 }

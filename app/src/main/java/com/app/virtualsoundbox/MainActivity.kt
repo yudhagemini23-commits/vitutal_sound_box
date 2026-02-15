@@ -49,6 +49,9 @@ import com.google.firebase.FirebaseApp
 
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import com.app.virtualsoundbox.data.local.AppDatabase
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
 
@@ -210,9 +213,18 @@ class MainActivity : ComponentActivity() {
                                     lifecycleScope.launch {
                                         googleAuthUiClient.signOut()
                                         userSession.logout()
+                                        sharedPref.edit().clear().apply()
+
+                                        withContext(Dispatchers.IO) {
+                                            val db = AppDatabase.getDatabase(this@MainActivity)
+                                            db.transactionDao().deleteAllTransactions()
+                                            db.userProfileDao().deleteAllProfiles()
+                                        }
+
                                         userData = null
                                         isProfileSetup = false
                                         state = SignInState()
+
                                         Toast.makeText(applicationContext, "Berhasil Keluar", Toast.LENGTH_SHORT).show()
                                     }
                                 }

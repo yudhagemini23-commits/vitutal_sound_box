@@ -27,4 +27,7 @@ interface TransactionDao {
     // Query filter range (Jika Mas sudah ada sebelumnya)
     @Query("SELECT * FROM transactions WHERE timestamp BETWEEN :start AND :end ORDER BY timestamp DESC")
     fun getTransactionsByDateRange(start: Long, end: Long): Flow<List<Transaction>>
+
+    @Query("DELETE FROM transactions")
+    suspend fun deleteAllTransactions()
 }
