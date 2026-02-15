@@ -196,7 +196,7 @@ class MainActivity : ComponentActivity() {
                         else -> {
                             // Dashboard Utama
                             DashboardScreen(
-                                userName = userSession.getUserId() ?: "Juragan",
+                                userName = userSession.getStoreName() ?: "Juragan",
                                 isNotificationEnabled = isNotifEnabled,
                                 onOpenNotificationSettings = { openNotificationSettings() },
                                 onOptimizeBattery = { requestChinesePhonePermissions(this@MainActivity) },
