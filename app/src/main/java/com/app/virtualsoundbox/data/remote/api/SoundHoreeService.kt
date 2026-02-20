@@ -5,6 +5,7 @@ import com.app.virtualsoundbox.data.remote.model.AuthResponse
 import com.app.virtualsoundbox.data.remote.model.TransactionDto
 import com.app.virtualsoundbox.data.remote.model.UpgradeRequest
 import com.app.virtualsoundbox.data.remote.model.UpgradeResponse
+import com.app.virtualsoundbox.model.NotificationRule
 import retrofit2.Response
 import retrofit2.http.*
 
@@ -41,4 +42,7 @@ interface SoundHoreeService {
         @Header("Authorization") token: String,
         @Body request: UpgradeRequest
     ): Response<UpgradeResponse>
+
+    @GET("config/rules")
+    suspend fun getNotificationRules(): retrofit2.Response<List<NotificationRule>>
 }

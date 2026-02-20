@@ -14,6 +14,7 @@ import com.app.virtualsoundbox.utils.UserSession
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import com.google.gson.Gson
 
 class ProfileViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -54,7 +55,9 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                         )
                     }
 
+                    fetchNotificationRules()
                     pullTransactionsFromServer(googleUid, token)
+
                     _setupState.value = SetupState.Success
 
                 } else {
@@ -63,6 +66,20 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
             } catch (e: Exception) {
                 _setupState.value = SetupState.Error("Koneksi bermasalah")
             }
+        }
+    }
+
+    // --- FUNGSI BARU UNTUK TARIK CONFIG ---
+    private suspend fun fetchNotificationRules() {
+        try {
+            val response = RetrofitClient.instance.getNotificationRules()
+            if (response.isSuccessful && response.body() != null) {
+                val rulesJson = Gson().toJson(response.body())
+                userSession.saveNotificationRules(rulesJson)
+                Log.d("AKD_RULES", "Berhasil sinkronisasi aturan notifikasi dari server")
+            }
+        } catch (e: Exception) {
+            Log.e("AKD_RULES", "Gagal tarik aturan notifikasi: ${e.message}")
         }
     }
 

@@ -16,7 +16,9 @@ import androidx.core.app.NotificationCompat
 import com.app.virtualsoundbox.MainActivity
 import com.app.virtualsoundbox.R
 import com.app.virtualsoundbox.data.local.AppDatabase
+import com.app.virtualsoundbox.data.remote.RetrofitClient
 import com.app.virtualsoundbox.data.repository.TransactionRepository
+import com.app.virtualsoundbox.model.NotificationRule
 import com.app.virtualsoundbox.model.Transaction
 import com.app.virtualsoundbox.utils.NotificationParser
 import com.app.virtualsoundbox.utils.UserSession
@@ -24,6 +26,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import java.util.Locale
+import com.google.gson.Gson
+import com.google.gson.reflect.TypeToken
+import kotlinx.coroutines.delay
 
 class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitListener {
 
@@ -51,6 +56,35 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
         repository = TransactionRepository(db.transactionDao())
         tts = TextToSpeech(this, this, "com.google.android.tts")
         startAsForeground()
+        startPeriodicConfigSync()
+    }
+
+    private fun startPeriodicConfigSync() {
+        scope.launch {
+            while (true) {
+                syncRulesFromServer()
+                // Tunggu 12 jam sebelum narik data lagi (12 jam * 60 mnt * 60 dtk * 1000 ms)
+                delay(12L * 60 * 60 * 1000)
+            }
+        }
+    }
+
+    private suspend fun syncRulesFromServer() {
+        try {
+            val response = RetrofitClient.instance.getNotificationRules()
+            if (response.isSuccessful && response.body() != null) {
+                val rulesJson = Gson().toJson(response.body())
+                val userSession = UserSession(applicationContext)
+
+                // Cek apakah ada perubahan biar nggak buang-buang resource nyimpen kalau sama
+                if (userSession.getNotificationRules() != rulesJson) {
+                    userSession.saveNotificationRules(rulesJson)
+                    Log.d("AKD_RULES", "Background Sync: Aturan notifikasi berhasil di-update dari server!")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("AKD_RULES", "Background Sync Gagal: ${e.message}")
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -72,9 +106,21 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
         val notification = sbn?.notification ?: return
         val pkgName = sbn.packageName ?: ""
 
-        val isTarget = TARGET_APPS.any { pkgName.contains(it, ignoreCase = true) }
-        if (!isTarget) return
+        val userSession = UserSession(applicationContext)
+        val rulesJson = userSession.getNotificationRules()
 
+        // 1. Jika Config dari server kosong, diam saja (abaikan)
+        if (rulesJson.isNullOrEmpty()) return
+
+        // 2. Parse Config JSON ke List Object
+        val type = object : TypeToken<List<NotificationRule>>() {}.type
+        val rules: List<NotificationRule> = Gson().fromJson(rulesJson, type)
+
+        // 3. Cek apakah package name notifikasi cocok dengan yang ada di Database Server
+        val activeRule = rules.find { pkgName.contains(it.packageName, ignoreCase = true) }
+        if (activeRule == null) return // Abaikan jika aplikasi tidak ada di daftar pantauan
+
+        // --- KUMPULKAN TEKS NOTIFIKASI ---
         val extras = notification.extras
         val allTexts = mutableListOf<String>()
 
@@ -85,81 +131,74 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
         if (allTexts.isEmpty()) {
             for (key in extras.keySet()) {
                 val value = extras.get(key)
-                if (value is CharSequence || value is String) {
-                    allTexts.add(value.toString())
-                }
+                if (value is CharSequence || value is String) allTexts.add(value.toString())
             }
         }
 
         val finalText = allTexts.joinToString(" ").trim()
-        val amount = NotificationParser.extractAmount(finalText)
+        var amount = 0.0
 
+        // --- 4. EKSEKUSI REGEX DINAMIS DARI SERVER ---
+        try {
+            val regex = Regex(activeRule.regexPattern, RegexOption.IGNORE_CASE)
+            val matchResult = regex.find(finalText)
+
+            if (matchResult != null && matchResult.groupValues.size > 1) {
+                // Ambil grup ke-1 (angka) dan buang pemisah ribuan (titik/koma)
+                val rawAmountStr = matchResult.groupValues[1]
+                val cleanAmountStr = rawAmountStr.replace(Regex("[^\\d]"), "")
+                amount = cleanAmountStr.toDoubleOrNull() ?: 0.0
+            }
+        } catch (e: Exception) {
+            Log.e("AKD_REGEX", "Error eksekusi regex untuk ${activeRule.appName}: ${e.message}")
+            return
+        }
+
+        // --- 5. JIKA UANG DITEMUKAN, PROSES TRANSAKSI ---
         if (amount > 0) {
-            // --- PERBAIKAN LOGIC SUBSCRIPTION: SOURCE FROM BACKEND (via UserSession) ---
-            val userSession = UserSession(applicationContext)
             val isPremium = userSession.isPremium()
             val currentRemaining = userSession.getRemainingTrial()
 
-
-            // Suara hanya bunyi jika: USER PREMIUM atau TRIAL MASIH ADA (> 0)
             val canPlaySound = isPremium || currentRemaining > 0
             val isLimitReached = !canPlaySound
 
-            // Update jatah trial secara lokal (Optimistic Update)
-            // Agar jika ada 2 notifikasi beruntun, notifikasi kedua tahu trial sudah berkurang
             if (!isPremium && currentRemaining > 0) {
-                // PERBAIKAN: Gunakan 'remainingTrial' bukan 'remaining'
-                userSession.savePremiumStatus(
-                    isPremium = false,
-                    remainingTrial = currentRemaining - 1
-                )
+                userSession.savePremiumStatus(isPremium = false, remainingTrial = currentRemaining - 1)
             }
-            // ---------------------------------------------------------------------------
 
             val cleanDisplay = finalText
                 .replace(Regex("(?i)android\\.app\\.Notification\\$[a-zA-Z]+"), "")
-                .replace("\n", " ")
-                .replace(Regex("\\s+"), " ")
-                .trim()
-                .take(100)
+                .replace("\n", " ").replace(Regex("\\s+"), " ").trim().take(100)
 
             val trx = Transaction(
                 sourceApp = pkgName,
                 amount = amount,
                 rawMessage = cleanDisplay,
                 timestamp = System.currentTimeMillis(),
-                isTrialLimited = isLimitReached // Status 'LOCKED' ditentukan di sini
+                isTrialLimited = isLimitReached
             )
 
             val token = userSession.getToken()
             val uid = userSession.getUserId()
 
             scope.launch {
-                if (token != null && uid != null) {
-                    // Sync ke MySQL Backend (Tabel Transactions)
-                    repository.insert(trx, token, uid)
-                } else {
-                    repository.insert(trx)
-                }
+                if (token != null && uid != null) repository.insert(trx, token, uid)
+                else repository.insert(trx)
             }
 
-            // --- TTS SPEAK LOGIC ---
+            // --- 6. SUARA (TTS) DINAMIS DARI SERVER ---
             if (canPlaySound) {
                 val amountString = String.format(Locale("id", "ID"), "%.0f", amount)
-                speak("Uang masuk, $amountString rupiah dari ${getSimpleAppName(pkgName)}")
+
+                // Ganti tag {amount} dan {app_name} sesuai format di MySQL
+                val ttsMessage = activeRule.ttsFormat
+                    .replace("{amount}", amountString)
+                    .replace("{app_name}", activeRule.appName)
+
+                speak(ttsMessage)
             } else {
                 Log.d("AKD_LISTENER", "Trial Habis & Belum Premium. Suara diblokir.")
             }
-        }
-    }
-
-    private fun getSimpleAppName(pkg: String): String {
-        return when {
-            pkg.contains("dana") -> "Dana"
-            pkg.contains("bca") -> "BCA"
-            pkg.contains("mandiri") -> "Livin Mandiri"
-            pkg.contains("gojek") -> "GoPay"
-            else -> "Aplikasi Lain"
         }
     }
 

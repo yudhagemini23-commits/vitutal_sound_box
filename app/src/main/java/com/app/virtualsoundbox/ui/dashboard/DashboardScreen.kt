@@ -2,6 +2,7 @@ package com.app.virtualsoundbox.ui.dashboard
 
 import android.app.DatePickerDialog
 import android.content.Context
+import android.util.Log
 import android.widget.DatePicker
 import android.widget.Toast
 import androidx.compose.animation.animateColorAsState
@@ -35,6 +36,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.app.virtualsoundbox.data.local.AppDatabase
+import com.app.virtualsoundbox.data.remote.RetrofitClient
 import com.app.virtualsoundbox.data.repository.TransactionRepository
 import com.app.virtualsoundbox.model.Transaction
 import com.app.virtualsoundbox.model.UserProfile
@@ -43,6 +45,7 @@ import com.app.virtualsoundbox.ui.profile.SetupState
 import com.app.virtualsoundbox.ui.subscription.SubscriptionDialog
 import com.app.virtualsoundbox.utils.NotificationParser
 import com.app.virtualsoundbox.utils.UserSession
+import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -95,6 +98,21 @@ fun DashboardScreen(
     LaunchedEffect(remainingTrial, isPremium) {
         if (!isPremium && remainingTrial <= 0) {
             showSubscriptionPopup = true
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            try {
+                val response = RetrofitClient.instance.getNotificationRules()
+                if (response.isSuccessful && response.body() != null) {
+                    val rulesJson = Gson().toJson(response.body())
+                    userSession.saveNotificationRules(rulesJson)
+                    Log.d("AKD_RULES", "Foreground Sync: Rules Updated!")
+                }
+            } catch (e: Exception) {
+                Log.e("AKD_RULES", "Gagal update rules saat buka app: ${e.message}")
+            }
         }
     }
 

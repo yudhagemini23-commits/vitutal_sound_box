@@ -14,6 +14,7 @@ class UserSession(context: Context) {
         private const val KEY_STORE_NAME = "store_name"
         private const val KEY_IS_PREMIUM = "isPremium"
         private const val KEY_REMAINING_TRIAL = "remaining_trial"
+        private const val KEY_NOTIF_RULES = "notif_rules"
     }
 
     fun saveSession(token: String, uid: String, email: String, storeName: String) {
@@ -34,6 +35,16 @@ class UserSession(context: Context) {
             apply()
         }
     }
+
+    // --- TAMBAHAN BARU: Simpan Aturan dari Server ---
+    fun saveNotificationRules(rulesJson: String) {
+        prefs.edit().putString(KEY_NOTIF_RULES, rulesJson).apply()
+    }
+
+    fun getNotificationRules(): String? {
+        return prefs.getString(KEY_NOTIF_RULES, null)
+    }
+    // ----------------------------------------------
 
     fun isPremium(): Boolean = prefs.getBoolean(KEY_IS_PREMIUM, false)
     fun getRemainingTrial(): Int = prefs.getInt(KEY_REMAINING_TRIAL, 0)
