@@ -1,6 +1,7 @@
 package com.app.virtualsoundbox.ui.login
 
 import android.widget.Toast
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.*
@@ -17,9 +18,14 @@ import androidx.compose.ui.unit.sp
 @Composable
 fun LoginScreen(
     state: SignInState,
-    onSignInClick: () -> Unit
+    onSignInClick: () -> Unit,
+    onTesterLoginClick: (String) -> Unit // Callback baru untuk bypass
 ) {
     val context = LocalContext.current
+
+    // State internal untuk mendeteksi ketukan rahasia
+    var tapCount by remember { mutableIntStateOf(0) }
+    var isTesterModeVisible by remember { mutableStateOf(false) }
 
     // Tampilkan error jika login gagal
     LaunchedEffect(key1 = state.signInError) {
@@ -38,9 +44,16 @@ fun LoginScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // Logo Aplikasi (Placeholder Icon)
+            // Logo Aplikasi - Bisa diketuk 7x untuk munculkan backdoor
             Surface(
-                modifier = Modifier.size(100.dp),
+                modifier = Modifier
+                    .size(100.dp)
+                    .clickable {
+                        tapCount++
+                        if (tapCount >= 7) {
+                            isTesterModeVisible = true
+                        }
+                    },
                 shape = CircleShape,
                 color = Color(0xFFE8F5E9)
             ) {
@@ -70,7 +83,7 @@ fun LoginScreen(
 
             Spacer(modifier = Modifier.height(48.dp))
 
-            // Tombol Login Google
+            // Tombol Login Google Normal
             Button(
                 onClick = onSignInClick,
                 modifier = Modifier.fillMaxWidth().height(56.dp),
@@ -79,10 +92,7 @@ fun LoginScreen(
                 shape = MaterialTheme.shapes.medium
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Mas Yudha bisa ganti ini dengan icon Google PNG kalau ada
-                    // Untuk sekarang pakai Text "G" warna warni atau icon sederhana
                     Text("G", fontWeight = FontWeight.Bold, fontSize = 24.sp, color = Color.Blue)
-
                     Spacer(modifier = Modifier.width(12.dp))
                     Text(
                         text = "Lanjutkan dengan Google",
@@ -93,6 +103,25 @@ fun LoginScreen(
                 }
             }
 
+            // --- TOMBOL RAHASIA (Hanya muncul setelah 7x klik logo) ---
+            if (isTesterModeVisible) {
+                Spacer(modifier = Modifier.height(24.dp))
+                OutlinedButton(
+                    onClick = { onTesterLoginClick("tester@algoritmakitadigital.id") },
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Red),
+                    shape = MaterialTheme.shapes.medium
+                ) {
+                    Text("Reviewer Access: Bypass Login", fontWeight = FontWeight.Bold)
+                }
+                Text(
+                    text = "Mode penguji aktif untuk Google Review",
+                    fontSize = 11.sp,
+                    color = Color.Red.copy(alpha = 0.7f),
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            }
+
             if (state.isLoading) {
                 Spacer(modifier = Modifier.height(24.dp))
                 CircularProgressIndicator(color = Color(0xFF2E7D32))
@@ -101,7 +130,6 @@ fun LoginScreen(
     }
 }
 
-// State class untuk Login Screen
 data class SignInState(
     val isLoading: Boolean = false,
     val isSuccess: Boolean = false,

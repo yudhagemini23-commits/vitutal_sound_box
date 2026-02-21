@@ -76,22 +76,13 @@ class MainActivity : ComponentActivity() {
                 val profileViewModel: ProfileViewModel = viewModel()
 
                 var isNotifEnabled by remember { mutableStateOf(isNotificationServiceEnabled()) }
-
-                // --- GATE 1: ONBOARDING ---
-                var showOnboarding by rememberSaveable {
-                    mutableStateOf(sharedPref.getBoolean("isFirstRun", true))
-                }
-
-                // --- GATE 2: LOGIN STATE (Gunakan UserSession, bukan Google Client) ---
+                var showOnboarding by rememberSaveable { mutableStateOf(sharedPref.getBoolean("isFirstRun", true)) }
                 var isLoggedIn by remember { mutableStateOf(userSession.isUserLoggedIn()) }
-
-                // --- GATE 3: PROFILE SETUP ---
                 var isProfileSetup by remember { mutableStateOf(userSession.isUserLoggedIn()) }
 
                 var state by remember { mutableStateOf(SignInState()) }
                 var userData by remember { mutableStateOf(googleAuthUiClient.getSignedInUser()) }
 
-                // --- LIFECYCLE OBSERVER ---
                 DisposableEffect(lifecycleOwner) {
                     val observer = LifecycleEventObserver { _, event ->
                         if (event == Lifecycle.Event.ON_RESUME) {
@@ -102,7 +93,6 @@ class MainActivity : ComponentActivity() {
                     onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
                 }
 
-                // --- GOOGLE SIGN IN LAUNCHER ---
                 val launcher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.StartIntentSenderForResult(),
                     onResult = { result ->
@@ -112,7 +102,6 @@ class MainActivity : ComponentActivity() {
                                 val signInResult = googleAuthUiClient.signInWithIntent(
                                     intent = result.data ?: return@launch
                                 )
-
                                 val user = signInResult.data
                                 if (user != null) {
                                     userData = user
@@ -121,24 +110,17 @@ class MainActivity : ComponentActivity() {
                                         email = user.email ?: "",
                                         onResult = { isExist, storeName, token ->
                                             if (isExist) {
-                                                // Simpan session permanen
                                                 userSession.saveSession(token, user.userId, user.email ?: "", storeName)
-                                                // Sync data transaksi
                                                 profileViewModel.registerOrLogin(storeName, user.email ?: "", "", "", user.userId)
-
                                                 isLoggedIn = true
                                                 isProfileSetup = true
-                                                Toast.makeText(applicationContext, "Selamat Datang Kembali!", Toast.LENGTH_SHORT).show()
                                             } else {
                                                 isProfileSetup = false
-                                                // User login Google sukses tapi profil belum ada di MySQL
                                                 isLoggedIn = true
                                             }
                                             state = state.copy(isLoading = false, isSuccess = true)
                                         },
-                                        onError = { error ->
-                                            state = state.copy(isLoading = false, signInError = error)
-                                        }
+                                        onError = { error -> state = state.copy(isLoading = false, signInError = error) }
                                     )
                                 } else {
                                     state = state.copy(isLoading = false, signInError = signInResult.errorMessage)
@@ -150,7 +132,6 @@ class MainActivity : ComponentActivity() {
                     }
                 )
 
-                // --- AUTO START SERVICE ---
                 LaunchedEffect(isNotifEnabled, showOnboarding, isLoggedIn, isProfileSetup) {
                     if (isNotifEnabled && !showOnboarding && isLoggedIn && isProfileSetup) {
                         startSoundService()
@@ -183,18 +164,29 @@ class MainActivity : ComponentActivity() {
                                             state = state.copy(isLoading = false, signInError = "Gagal Login")
                                         }
                                     }
+                                },
+                                onTesterLoginClick = { email ->
+                                    state = state.copy(isLoading = true)
+                                    performBypassLogin(
+                                        email = email,
+                                        userSession = userSession,
+                                        profileViewModel = profileViewModel,
+                                        onSuccess = {
+                                            isLoggedIn = true
+                                            isProfileSetup = true
+                                            state = state.copy(isLoading = false, isSuccess = true)
+                                        },
+                                        onFailure = { error ->
+                                            state = state.copy(isLoading = false, signInError = error)
+                                        }
+                                    )
                                 }
                             )
                         }
                         !isProfileSetup -> {
-                            ProfileSetupScreen(
-                                onProfileSaved = { storeName ->
-                                    isProfileSetup = true
-                                }
-                            )
+                            ProfileSetupScreen(onProfileSaved = { isProfileSetup = true })
                         }
                         else -> {
-                            // Dashboard Utama
                             DashboardScreen(
                                 userName = userSession.getStoreName() ?: "Juragan",
                                 isNotificationEnabled = isNotifEnabled,
@@ -204,18 +196,15 @@ class MainActivity : ComponentActivity() {
                                     lifecycleScope.launch {
                                         googleAuthUiClient.signOut()
                                         userSession.logout()
-
                                         withContext(Dispatchers.IO) {
                                             val db = AppDatabase.getDatabase(this@MainActivity)
                                             db.transactionDao().deleteAllTransactions()
                                             db.userProfileDao().deleteAllProfiles()
                                         }
-
                                         userData = null
                                         isLoggedIn = false
                                         isProfileSetup = false
                                         state = SignInState()
-
                                         Toast.makeText(applicationContext, "Berhasil Keluar", Toast.LENGTH_SHORT).show()
                                     }
                                 }
@@ -227,48 +216,54 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /**
-     * Sinkronisasi data premium dan trial dari MySQL Backend
-     */
-    private fun checkUserOnBackend(
-        googleUid: String,
+    private fun performBypassLogin(
         email: String,
-        onResult: (Boolean, String, String) -> Unit,
-        onError: (String) -> Unit
+        userSession: UserSession,
+        profileViewModel: ProfileViewModel,
+        onSuccess: () -> Unit,
+        onFailure: (String) -> Unit
     ) {
+        lifecycleScope.launch {
+            try {
+                val request = LoginRequest(
+                    uid = "REVIEWER-GOOGLE-PLAY-001",
+                    email = email,
+                    storeName = "Toko Tester Google",
+                    phoneNumber = "08123456789",
+                    category = "Digital"
+                )
+                val response = RetrofitClient.instance.loginUser(request)
+                if (response.isSuccessful && response.body() != null) {
+                    val authBody = response.body()!!
+                    val sub = authBody.subscription
+                    if (sub != null) userSession.savePremiumStatus(sub.isPremium, sub.remainingTrial)
+
+                    userSession.saveSession(authBody.token, "REVIEWER-GOOGLE-PLAY-001", email, "Toko Tester Google")
+                    onSuccess()
+                } else {
+                    onFailure("Bypass Denied by Server")
+                }
+            } catch (e: Exception) {
+                onFailure("Network Error")
+            }
+        }
+    }
+
+    private fun checkUserOnBackend(googleUid: String, email: String, onResult: (Boolean, String, String) -> Unit, onError: (String) -> Unit) {
         val userSession = UserSession(this)
         lifecycleScope.launch {
             try {
                 val request = LoginRequest(uid = googleUid, email = email, storeName = "", phoneNumber = "", category = "")
                 val response = RetrofitClient.instance.loginUser(request)
-
                 if (response.isSuccessful && response.body() != null) {
                     val authBody = response.body()!!
                     val profile = authBody.user
                     val sub = authBody.subscription
-
-                    // --- [SINKRONISASI KRUSIAL] ---
-                    // Simpan status premium dan trial asli dari MySQL ke SharedPreferences lokal
-                    if (sub != null) {
-                        userSession.savePremiumStatus(sub.isPremium, sub.remainingTrial)
-                    }
-
-                    userSession.saveSession(
-                        token = authBody.token,
-                        uid = googleUid,
-                        email = email,
-                        storeName = profile?.storeName ?: ""
-                    )
-
-                    val isExist = !profile?.storeName.isNullOrBlank()
-                    onResult(isExist, profile?.storeName ?: "", authBody.token)
-                } else {
-                    onError("Gagal koneksi server: ${response.code()}")
-                }
-            } catch (e: Exception) {
-                Log.e("AKD_AUTH", "Error Backend: ${e.message}")
-                onError("Kesalahan Jaringan")
-            }
+                    if (sub != null) userSession.savePremiumStatus(sub.isPremium, sub.remainingTrial)
+                    userSession.saveSession(authBody.token, googleUid, email, profile?.storeName ?: "")
+                    onResult(!profile?.storeName.isNullOrBlank(), profile?.storeName ?: "", authBody.token)
+                } else { onError("Server Error") }
+            } catch (e: Exception) { onError("Network Error") }
         }
     }
 
