@@ -25,22 +25,36 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.remember
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun OnboardingScreen(
     // Parameter userName SAYA HAPUS karena user belum login
     isNotificationEnabled: Boolean,
+    showBatteryOptimization: Boolean,
     onFinished: () -> Unit,
     onOpenNotifSettings: () -> Unit,
     onOptimizeBattery: () -> Unit
 ) {
-    val pages = listOf(
-        OnboardingData.Welcome,
-        OnboardingData.NotifAccess,
-        OnboardingData.ChinaPhone,
-        OnboardingData.GojekQris
-    )
+
+    val pages = remember(showBatteryOptimization) {
+        val list = mutableListOf(
+            OnboardingData.Welcome,
+            OnboardingData.NotifAccess
+        )
+
+        // Halaman ini HANYA diselipkan kalau HP-nya Xiaomi/Oppo/Vivo dll
+        if (showBatteryOptimization) {
+            list.add(OnboardingData.ChinaPhone)
+        }
+
+        // Halaman Gojek tetap masuk di urutan paling akhir
+        list.add(OnboardingData.GojekQris)
+
+        list // Return list-nya
+    }
+
     val pagerState = rememberPagerState(pageCount = { pages.size })
     val scope = rememberCoroutineScope()
 

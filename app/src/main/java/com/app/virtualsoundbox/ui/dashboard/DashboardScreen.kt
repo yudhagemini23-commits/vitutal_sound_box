@@ -54,6 +54,7 @@ import java.util.Locale
 fun DashboardScreen(
     userName: String,
     isNotificationEnabled: Boolean,
+    showBatteryOptimization: Boolean,
     onOpenNotificationSettings: () -> Unit,
     onOptimizeBattery: () -> Unit,
     onLogout: () -> Unit
@@ -191,8 +192,16 @@ fun DashboardScreen(
             item {
                 StatusCard(isEnabled = isNotificationEnabled, onClick = onOpenNotificationSettings)
                 Spacer(modifier = Modifier.height(8.dp))
-                BatteryOptimizationCard(onClick = onOptimizeBattery)
-                Spacer(modifier = Modifier.height(24.dp))
+
+                // -----------------------
+                if (showBatteryOptimization) {
+                    BatteryOptimizationCard(onClick = onOptimizeBattery)
+                    Spacer(modifier = Modifier.height(24.dp))
+                } else {
+                    // Beri jarak bawah saja kalau tombolnya disembunyikan
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+                // -----------------------
             }
 
             item {

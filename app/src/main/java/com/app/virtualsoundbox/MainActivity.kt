@@ -49,6 +49,7 @@ import com.app.virtualsoundbox.data.local.AppDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import android.Manifest
+import android.util.Log
 import androidx.compose.runtime.LaunchedEffect
 
 class MainActivity : ComponentActivity() {
@@ -72,6 +73,8 @@ class MainActivity : ComponentActivity() {
             VirtualSoundboxTheme {
                 val lifecycleOwner = LocalLifecycleOwner.current
                 val profileViewModel: ProfileViewModel = viewModel()
+
+                val isChineseDevice = remember { isChinesePhoneWhitelisted() }
 
                 var isNotifEnabled by remember { mutableStateOf(isNotificationServiceEnabled()) }
                 var showOnboarding by rememberSaveable { mutableStateOf(sharedPref.getBoolean("isFirstRun", true)) }
@@ -159,6 +162,7 @@ class MainActivity : ComponentActivity() {
                         showOnboarding -> {
                             OnboardingScreen(
                                 isNotificationEnabled = isNotifEnabled,
+                                showBatteryOptimization = isChineseDevice,
                                 onFinished = {
                                     sharedPref.edit().putBoolean("isFirstRun", false).apply()
                                     showOnboarding = false
@@ -206,6 +210,7 @@ class MainActivity : ComponentActivity() {
                             DashboardScreen(
                                 userName = userSession.getStoreName() ?: "Juragan",
                                 isNotificationEnabled = isNotifEnabled,
+                                showBatteryOptimization = isChineseDevice,
                                 onOpenNotificationSettings = { openNotificationSettings() },
                                 onOptimizeBattery = { requestChinesePhonePermissions(this@MainActivity) },
                                 onLogout = {
@@ -299,20 +304,65 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestChinesePhonePermissions(context: Context) {
-        val intent = Intent()
         val manufacturer = Build.MANUFACTURER.lowercase()
+
         try {
+            val intent = Intent()
             when {
-                manufacturer.contains("xiaomi") -> intent.component = ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")
-                manufacturer.contains("oppo") -> intent.component = ComponentName("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity")
-                manufacturer.contains("vivo") -> intent.component = ComponentName("com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity")
-                else -> intent.action = Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS
+                manufacturer.contains("xiaomi") || manufacturer.contains("redmi") || manufacturer.contains("poco") -> {
+                    intent.component = ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")
+                }
+                manufacturer.contains("oppo") || manufacturer.contains("realme") -> {
+                    // Sering berubah di ColorOS versi baru
+                    intent.component = ComponentName("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity")
+                }
+                manufacturer.contains("vivo") || manufacturer.contains("iqoo") -> {
+                    intent.component = ComponentName("com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity")
+                }
+                else -> {
+                    intent.action = Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS
+                }
             }
+            // Tambahkan flag ini agar lebih aman saat memanggil activity dari luar aplikasi
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             context.startActivity(intent)
+
         } catch (e: Exception) {
-            intent.action = Settings.ACTION_APPLICATION_DETAILS_SETTINGS
-            intent.data = Uri.fromParts("package", packageName, null)
-            context.startActivity(intent)
+            Log.e("AKD_DEBUG", "Gagal buka menu Autostart HP China: ${e.message}")
+
+            // FALLBACK 1: Coba buka menu baterai bawaan Android standar
+            try {
+                val fallbackIntent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                fallbackIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(fallbackIntent)
+
+            } catch (e2: Exception) {
+                // FALLBACK 2: Coba buka App Info (Pengaturan Aplikasi)
+                try {
+                    val finalIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                    finalIntent.data = Uri.fromParts("package", context.packageName, null)
+                    finalIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(finalIntent)
+
+                } catch (e3: Exception) {
+                    // FALLBACK 3: Jika OS-nya benar-benar rewel, tampilkan Toast saja. AMAN DARI CRASH!
+                    Toast.makeText(
+                        context,
+                        "Silakan izinkan Autostart secara manual di Pengaturan HP",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
         }
+    }
+
+    private fun isChinesePhoneWhitelisted(): Boolean {
+        val manufacturer = Build.MANUFACTURER.lowercase()
+        val brand = Build.BRAND.lowercase()
+
+        // Daftar merk HP yang butuh perlakuan khusus (Autostart)
+        val chineseBrands = listOf("xiaomi", "redmi", "poco", "oppo", "realme", "vivo", "iqoo", "letv")
+
+        return chineseBrands.any { manufacturer.contains(it) || brand.contains(it) }
     }
 }
