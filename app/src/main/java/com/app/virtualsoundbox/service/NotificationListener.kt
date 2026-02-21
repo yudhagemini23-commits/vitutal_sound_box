@@ -4,8 +4,10 @@ import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Bundle
 import android.service.notification.NotificationListenerService
@@ -52,12 +54,31 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
 
     override fun onCreate() {
         super.onCreate()
+        Log.d("AKD_DEBUG", "Service onCreate terpanggil")
         val db = AppDatabase.getDatabase(applicationContext)
         repository = TransactionRepository(db.transactionDao())
         tts = TextToSpeech(this, this, "com.google.android.tts")
         startAsForeground()
         startPeriodicConfigSync()
     }
+
+    // --- TAMBAHAN PROPER LIFECYCLE LISTENER ---
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        Log.d("AKD_DEBUG", "Sistem Android berhasil menyambungkan NotificationListener!")
+        // Panggil lagi untuk memastikan foreground aktif saat sistem benar-benar terkoneksi
+        startAsForeground()
+    }
+
+    override fun onListenerDisconnected() {
+        super.onListenerDisconnected()
+        Log.e("AKD_DEBUG", "NotificationListener terputus dari sistem!")
+        // Minta OS Android untuk menyambungkan kembali jika terbunuh paksa
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            requestRebind(ComponentName(this, NotificationListener::class.java))
+        }
+    }
+    // ------------------------------------------
 
     private fun startPeriodicConfigSync() {
         scope.launch {
@@ -88,6 +109,7 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.d("AKD_DEBUG", "Service onStartCommand terpanggil")
         startAsForeground()
         return START_STICKY
     }
@@ -229,32 +251,49 @@ class NotificationListener : NotificationListenerService(), TextToSpeech.OnInitL
 
     @SuppressLint("ForegroundServiceType")
     private fun startAsForeground() {
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        try {
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Layanan Sound Horee Tetap Aktif",
-                NotificationManager.IMPORTANCE_LOW
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(
+                    CHANNEL_ID,
+                    "Layanan Sound Horee Tetap Aktif",
+                    // Naikkan importance ke DEFAULT agar lebih diutamakan sistem
+                    NotificationManager.IMPORTANCE_DEFAULT
+                ).apply {
+                    description = "Mengamankan agar suara notifikasi uang masuk selalu aktif"
+                }
+                manager.createNotificationChannel(channel)
+            }
+
+            val notificationIntent = Intent(this, MainActivity::class.java)
+            val pendingIntent = PendingIntent.getActivity(
+                this, 0, notificationIntent,
+                PendingIntent.FLAG_IMMUTABLE
             )
-            manager.createNotificationChannel(channel)
+
+            val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle("Sound Horee Aktif")
+                .setContentText("Siap mendengarkan notifikasi uang masuk...")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentIntent(pendingIntent)
+                .setOngoing(true)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT) // Sesuaikan dengan channel
+                .build()
+
+            // Perbaikan untuk Android 14+ (API 34+)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    NOTIF_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                )
+            } else {
+                startForeground(NOTIF_ID, notification)
+            }
+            Log.d("AKD_DEBUG", "startAsForeground: SUKSES dijalankan")
+        } catch (e: Exception) {
+            Log.e("AKD_DEBUG", "startAsForeground GAGAL: ${e.message}")
         }
-
-        val notificationIntent = Intent(this, MainActivity::class.java)
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0, notificationIntent,
-            PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Sound Horee Aktif")
-            .setContentText("Siap mendengarkan notifikasi uang masuk...")
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentIntent(pendingIntent)
-            .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .build()
-
-        startForeground(NOTIF_ID, notification)
     }
 }
