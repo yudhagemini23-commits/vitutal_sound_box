@@ -84,6 +84,8 @@ fun DashboardScreen(
     var isPremium by remember { mutableStateOf(userSession.isPremium()) }
     var remainingTrial by remember { mutableStateOf(userSession.getRemainingTrial()) }
     var showSubscriptionPopup by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope() // Tambahkan scope untuk API call
+    var mockTapCount by remember { mutableIntStateOf(0) }
 
     // Pantau perubahan dari server (SetupState)
     LaunchedEffect(setupState) {
@@ -155,7 +157,17 @@ fun DashboardScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
+                    Column(
+                        modifier = Modifier.clickable {
+                            mockTapCount++
+                            if (mockTapCount >= 5) {
+                                mockTapCount = 0
+                                scope.launch {
+                                    performMockNotification(context, repository, userSession)
+                                }
+                            }
+                        }
+                    ) {
                         Text(displayName, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         Text(displayCategory, fontSize = 12.sp, color = Color.Gray)
                     }
@@ -230,6 +242,67 @@ fun DashboardScreen(
                     viewModel.unlockHistory()
                 }
             )
+        }
+    }
+}
+
+private suspend fun performMockNotification(
+    context: Context,
+    repository: TransactionRepository, // Kita butuh ini untuk insert ke Room
+    userSession: UserSession
+) {
+    withContext(Dispatchers.IO) {
+        try {
+            val nominal = 50000.0
+            val appName = "com.dana.id" // Kita pura-pura ini dari DANA
+            val message = "Berhasil terima uang Rp 50.000 dari Penguji Google"
+
+            // 1. Masukkan ke Database Lokal (Room)
+            // Ini yang membuat data langsung muncul di LazyColumn Mas
+            val mockTrx = com.app.virtualsoundbox.model.Transaction(
+                id = 0,
+                amount = nominal,
+                sourceApp = appName,
+                rawMessage = message,
+                timestamp = System.currentTimeMillis(),
+                isTrialLimited = false
+            )
+            repository.insert(mockTrx)
+
+            // 2. Trigger Suara (Text-to-Speech)
+            // Kita inisialisasi TTS lokal untuk keperluan testing reviewer
+            val tts = android.speech.tts.TextToSpeech(context) { status -> }
+            delay(500) // Beri waktu inisialisasi
+            tts.setLanguage(Locale("id", "ID"))
+            tts.speak(
+                "Ada uang masuk sebesar lima puluh ribu rupiah dari dana",
+                android.speech.tts.TextToSpeech.QUEUE_FLUSH,
+                null,
+                "MOCK_ID"
+            )
+
+            // 3. Kirim ke Backend (Sync)
+            // Sesuaikan endpoint-nya dengan fungsi simpan transaksi Mas
+            try {
+                val req = com.app.virtualsoundbox.data.remote.model.LoginRequest(
+                    uid = userSession.getUserId() ?: "",
+                    email = userSession.getUserEmail() ?: "",
+                    storeName = "MOCK_DANA",
+                    phoneNumber = nominal.toString(),
+                    category = message
+                )
+                RetrofitClient.instance.loginUser(req)
+            } catch (e: Exception) {
+                Log.e("AKD_MOCK", "Gagal sync backend: ${e.message}")
+            }
+
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "Simulasi Berhasil: Check List Transaksi!", Toast.LENGTH_LONG).show()
+            }
+        } catch (e: Exception) {
+            withContext(Dispatchers.Main) {
+                Toast.makeText(context, "Simulasi Gagal: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 }
