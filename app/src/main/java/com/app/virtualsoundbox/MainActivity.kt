@@ -48,6 +48,8 @@ import androidx.compose.runtime.setValue
 import com.app.virtualsoundbox.data.local.AppDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import android.Manifest
+import androidx.compose.runtime.LaunchedEffect
 
 class MainActivity : ComponentActivity() {
 
@@ -127,6 +129,24 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 )
+
+                val permissionLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.RequestPermission(),
+                    onResult = { isGranted ->
+                        if (isGranted) {
+                            android.util.Log.d("AKD_DEBUG", "Izin POST_NOTIFICATIONS diberikan!")
+                        } else {
+                            android.util.Log.e("AKD_DEBUG", "Izin POST_NOTIFICATIONS ditolak! Layanan bisa terbunuh.")
+                            Toast.makeText(this@MainActivity, "Izinkan notifikasi agar suara tidak mati!", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                )
+
+                LaunchedEffect(Unit) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                }
 
                 LaunchedEffect(isNotifEnabled, showOnboarding, isLoggedIn, isProfileSetup) {
                     if (isNotifEnabled && !showOnboarding && isLoggedIn && isProfileSetup) {
