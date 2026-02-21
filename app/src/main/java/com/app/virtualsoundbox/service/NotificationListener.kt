@@ -9,7 +9,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
-import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.speech.tts.TextToSpeech
@@ -22,7 +21,6 @@ import com.app.virtualsoundbox.data.remote.RetrofitClient
 import com.app.virtualsoundbox.data.repository.TransactionRepository
 import com.app.virtualsoundbox.model.NotificationRule
 import com.app.virtualsoundbox.model.Transaction
-import com.app.virtualsoundbox.utils.NotificationParser
 import com.app.virtualsoundbox.utils.UserSession
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
