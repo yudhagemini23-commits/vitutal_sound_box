@@ -15,6 +15,7 @@ class UserSession(context: Context) {
         private const val KEY_IS_PREMIUM = "isPremium"
         private const val KEY_REMAINING_TRIAL = "remaining_trial"
         private const val KEY_NOTIF_RULES = "notif_rules"
+        private const val KEY_EXPIRES_AT = "premium_expires_at" // Field Baru
     }
 
     fun saveSession(token: String, uid: String, email: String, storeName: String) {
@@ -27,27 +28,24 @@ class UserSession(context: Context) {
         }
     }
 
-    // Update status dari Backend
-    fun savePremiumStatus(isPremium: Boolean, remainingTrial: Int = 0) {
+    // UPDATE: Sekarang menerima expiry time dari server
+    fun savePremiumStatus(isPremium: Boolean, remainingTrial: Int = 0, expiresAt: Long = 0L) {
         prefs.edit().apply {
             putBoolean(KEY_IS_PREMIUM, isPremium)
             putInt(KEY_REMAINING_TRIAL, remainingTrial)
+            putLong(KEY_EXPIRES_AT, expiresAt)
             apply()
         }
     }
 
-    // --- TAMBAHAN BARU: Simpan Aturan dari Server ---
     fun saveNotificationRules(rulesJson: String) {
         prefs.edit().putString(KEY_NOTIF_RULES, rulesJson).apply()
     }
 
-    fun getNotificationRules(): String? {
-        return prefs.getString(KEY_NOTIF_RULES, null)
-    }
-    // ----------------------------------------------
-
+    fun getNotificationRules(): String? = prefs.getString(KEY_NOTIF_RULES, null)
     fun isPremium(): Boolean = prefs.getBoolean(KEY_IS_PREMIUM, false)
     fun getRemainingTrial(): Int = prefs.getInt(KEY_REMAINING_TRIAL, 0)
+    fun getPremiumExpiresAt(): Long = prefs.getLong(KEY_EXPIRES_AT, 0L) // Getter Baru
     fun getStoreName(): String? = prefs.getString(KEY_STORE_NAME, null)
     fun getUserEmail(): String? = prefs.getString(KEY_EMAIL, null)
     fun getToken(): String? = prefs.getString(KEY_TOKEN, null)

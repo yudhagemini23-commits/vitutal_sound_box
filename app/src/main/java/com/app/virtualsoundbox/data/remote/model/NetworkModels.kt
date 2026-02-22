@@ -13,7 +13,7 @@ data class LoginRequest(
 data class AuthResponse(
     @SerializedName("status") val status: String,
     @SerializedName("token") val token: String,
-    @SerializedName("user") val user: UserProfileDto?,
+    @SerializedName("user") val user: UserProfileDto?, // UserProfileDto harus punya field baru
     @SerializedName("subscription") val subscription: SubscriptionDto?
 )
 
@@ -23,8 +23,11 @@ data class UserProfileDto(
     @SerializedName("store_name") val storeName: String?,
     @SerializedName("phone_number") val phoneNumber: String?,
     @SerializedName("category") val category: String?,
-    @SerializedName("joined_at") val joinedAt: Long, // Tambahkan ini (WAJIB Long)
-    @SerializedName("is_premium") val isPremium: Boolean // Tambahkan ini
+    @SerializedName("joined_at") val joinedAt: Long,
+    @SerializedName("is_premium") val isPremium: Boolean,
+
+    // TAMBAHKAN INI agar ProfileViewModel bisa membaca data dari server
+    @SerializedName("premium_expires_at") val premiumExpiresAt: Long
 )
 
 data class TransactionDto(
@@ -59,5 +62,4 @@ data class UpgradeRequest(
 
 data class UpgradeResponse(
     @SerializedName("status") val status: String,
-    @SerializedName("expiry_date") val expiryDate: Long
-)
+    @SerializedName("expiry_date") val expiryDate: Long)

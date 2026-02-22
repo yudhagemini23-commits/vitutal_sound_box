@@ -7,7 +7,6 @@ import androidx.lifecycle.viewModelScope
 import com.app.virtualsoundbox.data.local.AppDatabase
 import com.app.virtualsoundbox.data.remote.RetrofitClient
 import com.app.virtualsoundbox.data.remote.model.LoginRequest
-import com.app.virtualsoundbox.data.remote.model.TransactionDto
 import com.app.virtualsoundbox.data.remote.model.UpgradeRequest
 import com.app.virtualsoundbox.model.Transaction
 import com.app.virtualsoundbox.utils.UserSession
@@ -15,12 +14,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import com.google.gson.Gson
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class ProfileViewModel(application: Application) : AndroidViewModel(application) {
 
     private val userSession = UserSession(application)
 
-    // State untuk UI (Loading, Success, Error)
     private val _setupState = MutableStateFlow<SetupState>(SetupState.Idle)
     val setupState = _setupState.asStateFlow()
 
@@ -41,19 +41,19 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                 if (response.isSuccessful && response.body() != null) {
                     val authData = response.body()!!
                     val token = authData.token
+                    val user = authData.user // Objek User dari Backend
 
-                    // 1. Simpan Session Dasar (UID, Email, Token)
+                    // 1. Simpan Session Dasar
                     userSession.saveSession(token, googleUid, email, storeName)
 
-                    // 2. [SOLUSI] Update status Premium & Trial dari hasil login
+                    // 2. [SINKRONISASI] Simpan status Premium + Expiry Date dari Server
                     val sub = authData.subscription
-                    if (sub != null) {
-                        // Simpan data ke SharedPreferences agar Dashboard langsung update
-                        userSession.savePremiumStatus(
-                            isPremium = sub.isPremium,
-                            remainingTrial = sub.remainingTrial
-                        )
-                    }
+                    userSession.savePremiumStatus(
+                        isPremium = sub?.isPremium ?: false,
+                        remainingTrial = sub?.remainingTrial ?: 0,
+                        // PERBAIKAN: Gunakan ?. dan berikan nilai default 0L
+                        expiresAt = user?.premiumExpiresAt ?: 0L
+                    )
 
                     fetchNotificationRules()
                     pullTransactionsFromServer(googleUid, token)
@@ -64,60 +64,54 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                     _setupState.value = SetupState.Error("Gagal sinkronisasi dengan server")
                 }
             } catch (e: Exception) {
-                _setupState.value = SetupState.Error("Koneksi bermasalah")
+                _setupState.value = SetupState.Error("Koneksi bermasalah: ${e.message}")
             }
         }
     }
 
-    // --- FUNGSI BARU UNTUK TARIK CONFIG ---
     private suspend fun fetchNotificationRules() {
         try {
             val response = RetrofitClient.instance.getNotificationRules()
             if (response.isSuccessful && response.body() != null) {
                 val rulesJson = Gson().toJson(response.body())
                 userSession.saveNotificationRules(rulesJson)
-                Log.d("AKD_RULES", "Berhasil sinkronisasi aturan notifikasi dari server")
             }
         } catch (e: Exception) {
-            Log.e("AKD_RULES", "Gagal tarik aturan notifikasi: ${e.message}")
+            Log.e("AKD_RULES", "Gagal tarik aturan: ${e.message}")
         }
     }
 
     private suspend fun pullTransactionsFromServer(uid: String, token: String) {
-        try {
-            // Panggil endpoint GET /transactions
-            val response = RetrofitClient.instance.getTransactions(
-                token = "Bearer $token",
-                userId = uid,
-                start = 0, // Ambil semua data sejarah
-                end = System.currentTimeMillis()
-            )
+        withContext(Dispatchers.IO) { // Pastikan jalan di Background Thread
+            try {
+                val response = RetrofitClient.instance.getTransactions(
+                    token = "Bearer $token",
+                    userId = uid,
+                    start = 0,
+                    end = System.currentTimeMillis()
+                )
 
-            if (response.isSuccessful) {
-                val serverData = response.body() ?: emptyList() // Gunakan Elvis operator biar aman dari null
-
-                if (serverData.isNotEmpty()) {
-                    val localEntities = serverData.map { dto ->
-                        Transaction(
-                            sourceApp = dto.sourceApp,
-                            amount = dto.amount,
-                            rawMessage = dto.rawMessage,
-                            timestamp = dto.timestamp,
-                            isTrialLimited = dto.isTrialLimited
-                        )
+                if (response.isSuccessful) {
+                    val serverData = response.body() ?: emptyList()
+                    if (serverData.isNotEmpty()) {
+                        val localEntities = serverData.map { dto ->
+                            Transaction(
+                                sourceApp = dto.sourceApp,
+                                amount = dto.amount,
+                                rawMessage = dto.rawMessage,
+                                timestamp = dto.timestamp,
+                                isTrialLimited = dto.isTrialLimited
+                            )
+                        }
+                        AppDatabase.getDatabase(getApplication()).transactionDao().insertAll(localEntities)
                     }
-
-                    AppDatabase.getDatabase(getApplication()).transactionDao().insertAll(localEntities)
-                    Log.d("Sync", "✅ Berhasil menarik ${localEntities.size} transaksi dari server")
                 }
+            } catch (e: Exception) {
+                Log.e("Sync", "Gagal tarik data: ${e.message}")
             }
-
-        } catch (e: Exception) {
-            Log.e("Sync", "Gagal tarik data: ${e.message}")
         }
     }
 
-    // --- FUNGSI INI YANG DISESUAIKAN ---
     fun upgradePremium(planType: String, googleUid: String, purchaseToken: String = "", orderId: String = "") {
         _setupState.value = SetupState.Loading
         viewModelScope.launch {
@@ -126,8 +120,8 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                 val requestBody = UpgradeRequest(
                     userId = googleUid,
                     planType = planType.lowercase(),
-                    iapPurchaseToken = purchaseToken, // Kirim token Google Play ke Backend
-                    iapOrderId = orderId            // Kirim Order ID ke Backend
+                    iapPurchaseToken = purchaseToken,
+                    iapOrderId = orderId
                 )
 
                 val response = RetrofitClient.instance.upgradeToPremium(
@@ -135,8 +129,15 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                     request = requestBody
                 )
 
-                if (response.isSuccessful) {
-                    userSession.savePremiumStatus(isPremium = true, remainingTrial = 0)
+                if (response.isSuccessful && response.body() != null) {
+                    // [SINKRONISASI] Ambil expiry_date asli dari response backend
+                    val expiryDate = response.body()!!.expiryDate
+
+                    userSession.savePremiumStatus(
+                        isPremium = true,
+                        remainingTrial = 0,
+                        expiresAt = expiryDate // <--- UPDATE DENGAN DATA DARI GOOGLE
+                    )
                     _setupState.value = SetupState.Success
                 } else {
                     _setupState.value = SetupState.Error("Verifikasi server gagal")
@@ -148,7 +149,6 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     }
 }
 
-// Helper State
 sealed class SetupState {
     object Idle : SetupState()
     object Loading : SetupState()

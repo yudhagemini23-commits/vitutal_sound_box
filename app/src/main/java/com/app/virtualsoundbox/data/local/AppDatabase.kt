@@ -7,8 +7,8 @@ import androidx.room.RoomDatabase
 import com.app.virtualsoundbox.model.Transaction
 import com.app.virtualsoundbox.model.UserProfile
 
-// PERBAIKAN 1: Naikkan version dari 1 ke 2
-@Database(entities = [Transaction::class, UserProfile::class], version = 2, exportSchema = false)
+// PERBAIKAN 1: Naikkan version dari 2 ke 3
+@Database(entities = [Transaction::class, UserProfile::class], version = 3, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun transactionDao(): TransactionDao

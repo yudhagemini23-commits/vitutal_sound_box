@@ -59,80 +59,107 @@ fun DashboardScreen(
     showBatteryOptimization: Boolean,
     onOpenNotificationSettings: () -> Unit,
     onOptimizeBattery: () -> Unit,
-    billingManager: BillingManager, // Parameter Baru
+    billingManager: BillingManager,
     onLogout: () -> Unit
 ) {
     val context = LocalContext.current
-    val activity = context as Activity // Dibutuhkan untuk memicu Billing Flow
+    val activity = context as Activity
     val userSession = remember { UserSession(context) }
     val scope = rememberCoroutineScope()
 
-    // --- SETUP DB & VIEWMODEL ---
     val db = AppDatabase.getDatabase(context)
     val repository = TransactionRepository(db.transactionDao())
     val factory = DashboardViewModelFactory(repository)
     val viewModel: DashboardViewModel = viewModel(factory = factory)
     val profileViewModel: ProfileViewModel = viewModel()
 
-    // --- STATES DATA ---
     val totalIncome by viewModel.totalIncome.collectAsStateWithLifecycle()
     val transactions by viewModel.transactions.collectAsStateWithLifecycle()
     val filterLabel by viewModel.filterLabel.collectAsStateWithLifecycle()
     val setupState by profileViewModel.setupState.collectAsStateWithLifecycle()
 
-    // --- BILLING STATES ---
     val purchaseState by billingManager.purchaseState.collectAsStateWithLifecycle()
-    val productDetails by billingManager.productDetails.collectAsStateWithLifecycle()
 
-    // --- DATA SUBSCRIPTION ---
+    // --- STATES ---
     var isPremium by remember { mutableStateOf(userSession.isPremium()) }
     var remainingTrial by remember { mutableStateOf(userSession.getRemainingTrial()) }
+    var premiumExpiresAt by remember { mutableLongStateOf(userSession.getPremiumExpiresAt()) }
     var showSubscriptionPopup by remember { mutableStateOf(false) }
     var mockTapCount by remember { mutableIntStateOf(0) }
 
-    // --- LOGIKA HANDLING PEMBAYARAN GOOGLE PLAY ---
-    LaunchedEffect(purchaseState) {
-        when (purchaseState) {
-            is BillingManager.PurchaseState.Success -> {
-                val state = purchaseState as BillingManager.PurchaseState.Success
-                val uid = userSession.getUserId() ?: ""
-
-                // 1. Update UI Lokal Seketika
-                userSession.savePremiumStatus(isPremium = true, remainingTrial = 0)
-                isPremium = true
-                showSubscriptionPopup = false
-
-                // 2. Sinkronkan Token ke Backend (Audit & MySQL)
-                profileViewModel.upgradePremium(
-                    planType = "monthly",
-                    googleUid = uid,
-                    purchaseToken = state.token,
-                    orderId = state.orderId
-                )
-
-                viewModel.unlockHistory()
-                Toast.makeText(context, "Horee! Premium Aktif.", Toast.LENGTH_SHORT).show()
-                billingManager.resetState()
+    // --- 1. LOGIKA CEK EXPIRED LOKAL (REAL-TIME) ---
+    LaunchedEffect(isPremium, premiumExpiresAt) {
+        if (isPremium && premiumExpiresAt > 0) {
+            while (true) {
+                val now = System.currentTimeMillis()
+                if (now > premiumExpiresAt) {
+                    // Jika waktu sekarang melewati expiry, paksa jadi free
+                    isPremium = false
+                    userSession.savePremiumStatus(false, 0, 0)
+                    Toast.makeText(context, "Masa langganan berakhir", Toast.LENGTH_LONG).show()
+                    break
+                }
+                delay(10000) // Cek setiap 10 detik agar hemat baterai tapi tetap responsif
             }
-            is BillingManager.PurchaseState.Error -> {
-                val errorMsg = (purchaseState as BillingManager.PurchaseState.Error).message
-                Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show()
-                billingManager.resetState()
-            }
-            else -> {}
         }
     }
 
-    // Pantau perubahan dari server (SetupState)
+    // --- 2. SINKRONISASI SAAT APP DIBUKA ---
+    LaunchedEffect(Unit) {
+        // A. Cek Google Play untuk perpanjangan otomatis (Auto-Renewal)
+        billingManager.checkActiveSubscriptions { token, orderId ->
+            val uid = userSession.getUserId() ?: ""
+            profileViewModel.upgradePremium("monthly", uid, token, orderId)
+        }
+
+        // B. Update Aturan Notifikasi
+        withContext(Dispatchers.IO) {
+            try {
+                val response = RetrofitClient.instance.getNotificationRules()
+                if (response.isSuccessful && response.body() != null) {
+                    val rulesJson = Gson().toJson(response.body())
+                    userSession.saveNotificationRules(rulesJson)
+                }
+            } catch (e: Exception) {
+                Log.e("AKD_RULES", "Error sync rules: ${e.message}")
+            }
+        }
+    }
+
+    // --- 3. HANDLING PEMBAYARAN SUKSES ---
+    LaunchedEffect(purchaseState) {
+        if (purchaseState is BillingManager.PurchaseState.Success) {
+            val state = purchaseState as BillingManager.PurchaseState.Success
+            val uid = userSession.getUserId() ?: ""
+
+            // Estimasi lokal (30 hari) sambil menunggu balasan server
+            val estimatedExpiry = System.currentTimeMillis() + (30L * 24 * 60 * 60 * 1000)
+            userSession.savePremiumStatus(true, 0, estimatedExpiry)
+
+            isPremium = true
+            premiumExpiresAt = estimatedExpiry
+            showSubscriptionPopup = false
+
+            profileViewModel.upgradePremium("monthly", uid, state.token, state.orderId)
+            viewModel.unlockHistory()
+            Toast.makeText(context, "Premium Aktif!", Toast.LENGTH_SHORT).show()
+            billingManager.resetState()
+        } else if (purchaseState is BillingManager.PurchaseState.Error) {
+            Toast.makeText(context, (purchaseState as BillingManager.PurchaseState.Error).message, Toast.LENGTH_SHORT).show()
+            billingManager.resetState()
+        }
+    }
+
+    // --- 4. UPDATE DATA DARI SERVER (PROFILE SYNC) ---
     LaunchedEffect(setupState) {
         if (setupState is SetupState.Success) {
             isPremium = userSession.isPremium()
             remainingTrial = userSession.getRemainingTrial()
+            premiumExpiresAt = userSession.getPremiumExpiresAt()
             showSubscriptionPopup = false
         }
     }
 
-    // Logic Popup Otomatis: Jika bukan premium & trial habis
     LaunchedEffect(remainingTrial, isPremium) {
         if (!isPremium && remainingTrial <= 0) {
             showSubscriptionPopup = true

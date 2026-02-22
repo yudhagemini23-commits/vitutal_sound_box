@@ -99,6 +99,23 @@ class BillingManager(private val context: Context) : PurchasesUpdatedListener {
         }
     }
 
+    fun checkActiveSubscriptions(onFound: (String, String) -> Unit) {
+        val params = QueryPurchasesParams.newBuilder()
+            .setProductType(BillingClient.ProductType.SUBS)
+            .build()
+
+        billingClient.queryPurchasesAsync(params) { billingResult, purchases ->
+            if (billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
+                // Cari pembelian yang statusnya PURCHASED (Aktif)
+                val activePurchase = purchases.find { it.purchaseState == Purchase.PurchaseState.PURCHASED }
+                if (activePurchase != null) {
+                    // Berikan token dan orderId ke callback untuk dikirim ke Backend
+                    onFound(activePurchase.purchaseToken, activePurchase.orderId ?: "")
+                }
+            }
+        }
+    }
+
     private fun verifyAndAcknowledgePurchase(purchase: Purchase) {
         if (purchase.purchaseState == Purchase.PurchaseState.PURCHASED) {
             if (!purchase.isAcknowledged) {
