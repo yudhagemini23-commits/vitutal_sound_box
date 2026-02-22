@@ -117,18 +117,25 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun upgradePremium(planType: String, googleUid: String) {
+    // --- FUNGSI INI YANG DISESUAIKAN ---
+    fun upgradePremium(planType: String, googleUid: String, purchaseToken: String = "", orderId: String = "") {
         _setupState.value = SetupState.Loading
         viewModelScope.launch {
             try {
                 val token = userSession.getToken() ?: ""
+                val requestBody = UpgradeRequest(
+                    userId = googleUid,
+                    planType = planType.lowercase(),
+                    iapPurchaseToken = purchaseToken, // Kirim token Google Play ke Backend
+                    iapOrderId = orderId            // Kirim Order ID ke Backend
+                )
+
                 val response = RetrofitClient.instance.upgradeToPremium(
                     token = "Bearer $token",
-                    request = UpgradeRequest(userId = googleUid, planType = planType.lowercase())
+                    request = requestBody
                 )
 
                 if (response.isSuccessful) {
-                    // --- PERBAIKAN: Parameter sekarang sudah sesuai dengan UserSession ---
                     userSession.savePremiumStatus(isPremium = true, remainingTrial = 0)
                     _setupState.value = SetupState.Success
                 } else {

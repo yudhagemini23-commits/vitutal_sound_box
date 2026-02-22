@@ -10,8 +10,8 @@ import java.util.concurrent.TimeUnit
 object RetrofitClient {
 
     // Ganti dengan IP Laptop Mas jika pakai HP asli (misal: "http://192.168.1.5:8080/api/v1/")
-//    private const val BASE_URL = "http://192.168.100.3:8080/api/v1/"
-    private const val BASE_URL = "https://algoritmakitadigital.id/api/v1/"
+    private const val BASE_URL = "http://192.168.100.3:9823/api/v1/"
+//    private const val BASE_URL = "https://algoritmakitadigital.id/api/v1/"
 
     private val loggingInterceptor = HttpLoggingInterceptor().apply {
         level = HttpLoggingInterceptor.Level.BODY

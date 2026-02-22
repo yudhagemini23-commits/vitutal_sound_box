@@ -40,3 +40,14 @@
 # Mencegah animasi atau state Compose hilang saat di-shrink
 -keep class androidx.compose.** { *; }
 -keep class kotlinx.coroutines.** { *; }
+
+# --- GOOGLE PLAY BILLING ---
+-keep class com.android.billingclient.api.** { *; }
+-dontwarn com.android.billingclient.api.**
+
+# Mencegah pengacakan pada callback internal Billing
+-keep class com.android.vending.billing.** { *; }
+
+# Jaga agar data class UpgradeRequest tidak diacak variabelnya
+# Sesuaikan package-nya dengan folder model Mas
+-keep class com.app.virtualsoundbox.data.remote.model.UpgradeRequest { *; }

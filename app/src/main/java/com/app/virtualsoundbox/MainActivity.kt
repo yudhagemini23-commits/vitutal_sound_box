@@ -51,12 +51,15 @@ import kotlinx.coroutines.withContext
 import android.Manifest
 import android.util.Log
 import androidx.compose.runtime.LaunchedEffect
+import com.app.virtualsoundbox.utils.BillingManager
 
 class MainActivity : ComponentActivity() {
 
     private val googleAuthUiClient by lazy {
         GoogleAuthClient(applicationContext)
     }
+
+    private val billingManager by lazy { BillingManager(applicationContext) }
 
     @SuppressLint("UseKtx")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -212,6 +215,7 @@ class MainActivity : ComponentActivity() {
                                 isNotificationEnabled = isNotifEnabled,
                                 showBatteryOptimization = isChineseDevice,
                                 onOpenNotificationSettings = { openNotificationSettings() },
+                                billingManager = billingManager,
                                 onOptimizeBattery = { requestChinesePhonePermissions(this@MainActivity) },
                                 onLogout = {
                                     lifecycleScope.launch {

@@ -1,5 +1,6 @@
 package com.app.virtualsoundbox.ui.dashboard
 
+import android.app.Activity
 import android.app.DatePickerDialog
 import android.content.Context
 import android.util.Log
@@ -37,6 +38,7 @@ import com.app.virtualsoundbox.model.UserProfile
 import com.app.virtualsoundbox.ui.profile.ProfileViewModel
 import com.app.virtualsoundbox.ui.profile.SetupState
 import com.app.virtualsoundbox.ui.subscription.SubscriptionDialog
+import com.app.virtualsoundbox.utils.BillingManager
 import com.app.virtualsoundbox.utils.NotificationParser
 import com.app.virtualsoundbox.utils.UserSession
 import com.google.gson.Gson
@@ -57,17 +59,20 @@ fun DashboardScreen(
     showBatteryOptimization: Boolean,
     onOpenNotificationSettings: () -> Unit,
     onOptimizeBattery: () -> Unit,
+    billingManager: BillingManager, // Parameter Baru
     onLogout: () -> Unit
 ) {
     val context = LocalContext.current
+    val activity = context as Activity // Dibutuhkan untuk memicu Billing Flow
     val userSession = remember { UserSession(context) }
+    val scope = rememberCoroutineScope()
 
     // --- SETUP DB & VIEWMODEL ---
     val db = AppDatabase.getDatabase(context)
     val repository = TransactionRepository(db.transactionDao())
     val factory = DashboardViewModelFactory(repository)
     val viewModel: DashboardViewModel = viewModel(factory = factory)
-    val profileViewModel: ProfileViewModel = viewModel() // Untuk upgrade premium
+    val profileViewModel: ProfileViewModel = viewModel()
 
     // --- STATES DATA ---
     val totalIncome by viewModel.totalIncome.collectAsStateWithLifecycle()
@@ -75,12 +80,48 @@ fun DashboardScreen(
     val filterLabel by viewModel.filterLabel.collectAsStateWithLifecycle()
     val setupState by profileViewModel.setupState.collectAsStateWithLifecycle()
 
-    // --- PERBAIKAN: DATA SUBSCRIPTION DARI USER SESSION (BACKEND SOURCE) ---
+    // --- BILLING STATES ---
+    val purchaseState by billingManager.purchaseState.collectAsStateWithLifecycle()
+    val productDetails by billingManager.productDetails.collectAsStateWithLifecycle()
+
+    // --- DATA SUBSCRIPTION ---
     var isPremium by remember { mutableStateOf(userSession.isPremium()) }
     var remainingTrial by remember { mutableStateOf(userSession.getRemainingTrial()) }
     var showSubscriptionPopup by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope() // Tambahkan scope untuk API call
     var mockTapCount by remember { mutableIntStateOf(0) }
+
+    // --- LOGIKA HANDLING PEMBAYARAN GOOGLE PLAY ---
+    LaunchedEffect(purchaseState) {
+        when (purchaseState) {
+            is BillingManager.PurchaseState.Success -> {
+                val state = purchaseState as BillingManager.PurchaseState.Success
+                val uid = userSession.getUserId() ?: ""
+
+                // 1. Update UI Lokal Seketika
+                userSession.savePremiumStatus(isPremium = true, remainingTrial = 0)
+                isPremium = true
+                showSubscriptionPopup = false
+
+                // 2. Sinkronkan Token ke Backend (Audit & MySQL)
+                profileViewModel.upgradePremium(
+                    planType = "monthly",
+                    googleUid = uid,
+                    purchaseToken = state.token,
+                    orderId = state.orderId
+                )
+
+                viewModel.unlockHistory()
+                Toast.makeText(context, "Horee! Premium Aktif.", Toast.LENGTH_SHORT).show()
+                billingManager.resetState()
+            }
+            is BillingManager.PurchaseState.Error -> {
+                val errorMsg = (purchaseState as BillingManager.PurchaseState.Error).message
+                Toast.makeText(context, errorMsg, Toast.LENGTH_LONG).show()
+                billingManager.resetState()
+            }
+            else -> {}
+        }
+    }
 
     // Pantau perubahan dari server (SetupState)
     LaunchedEffect(setupState) {
@@ -98,6 +139,7 @@ fun DashboardScreen(
         }
     }
 
+    // Sinkronkan Notif Rules saat Buka App
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             try {
@@ -105,10 +147,9 @@ fun DashboardScreen(
                 if (response.isSuccessful && response.body() != null) {
                     val rulesJson = Gson().toJson(response.body())
                     userSession.saveNotificationRules(rulesJson)
-                    Log.d("AKD_RULES", "Foreground Sync: Rules Updated!")
                 }
             } catch (e: Exception) {
-                Log.e("AKD_RULES", "Gagal update rules saat buka app: ${e.message}")
+                Log.e("AKD_RULES", "Gagal update rules: ${e.message}")
             }
         }
     }
@@ -157,9 +198,7 @@ fun DashboardScreen(
                             mockTapCount++
                             if (mockTapCount >= 5) {
                                 mockTapCount = 0
-                                scope.launch {
-                                    performMockNotification(context, repository, userSession)
-                                }
+                                scope.launch { performMockNotification(context, repository, userSession) }
                             }
                         }
                     ) {
@@ -193,15 +232,12 @@ fun DashboardScreen(
                 StatusCard(isEnabled = isNotificationEnabled, onClick = onOpenNotificationSettings)
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // -----------------------
                 if (showBatteryOptimization) {
                     BatteryOptimizationCard(onClick = onOptimizeBattery)
                     Spacer(modifier = Modifier.height(24.dp))
                 } else {
-                    // Beri jarak bawah saja kalau tombolnya disembunyikan
                     Spacer(modifier = Modifier.height(16.dp))
                 }
-                // -----------------------
             }
 
             item {
@@ -236,81 +272,54 @@ fun DashboardScreen(
             SubscriptionDialog(
                 remainingTrial = remainingTrial,
                 onDismiss = { if (remainingTrial > 0) showSubscriptionPopup = false },
-                onSubscribeSuccess = { plan ->
-                    // HIT API BACKEND UNTUK UPGRADE
-//                    profileViewModel.upgradePremium(plan, userSession.getUserId() ?: "")
-                    val uid = userSession.getUserId() ?: ""
-                    userSession.savePremiumStatus(isPremium = true, remainingTrial = 0)
-                    profileViewModel.upgradePremium(plan, uid)
-                    viewModel.unlockHistory()
+                onSubscribeSuccess = { _ ->
+                    // TRIGGER GOOGLE PLAY BILLING
+                    billingManager.launchPurchaseFlow(activity)
                 }
             )
         }
     }
 }
 
+// --- FUNGSI FORMAT RUPIAH ---
+fun formatRupiah(number: Double?): String {
+    val format = NumberFormat.getCurrencyInstance(Locale("id", "ID"))
+    return format.format(number ?: 0.0).replace("Rp", "Rp ")
+}
+
+// --- MOCK NOTIFIKASI (UNTUK TESTER) ---
 private suspend fun performMockNotification(
     context: Context,
-    repository: TransactionRepository, // Kita butuh ini untuk insert ke Room
+    repository: TransactionRepository,
     userSession: UserSession
 ) {
     withContext(Dispatchers.IO) {
         try {
             val nominal = 50000.0
-            val appName = "com.dana.id" // Kita pura-pura ini dari DANA
+            val appName = "com.dana.id"
             val message = "Berhasil terima uang Rp 50.000 dari Penguji Google"
 
-            // 1. Masukkan ke Database Lokal (Room)
-            // Ini yang membuat data langsung muncul di LazyColumn Mas
             val mockTrx = com.app.virtualsoundbox.model.Transaction(
-                id = 0,
-                amount = nominal,
-                sourceApp = appName,
-                rawMessage = message,
-                timestamp = System.currentTimeMillis(),
-                isTrialLimited = false
+                id = 0, amount = nominal, sourceApp = appName, rawMessage = message,
+                timestamp = System.currentTimeMillis(), isTrialLimited = false
             )
             repository.insert(mockTrx)
 
-            // 2. Trigger Suara (Text-to-Speech)
-            // Kita inisialisasi TTS lokal untuk keperluan testing reviewer
-            val tts = android.speech.tts.TextToSpeech(context) { status -> }
-            delay(500) // Beri waktu inisialisasi
+            val tts = android.speech.tts.TextToSpeech(context) { }
+            delay(500)
             tts.setLanguage(Locale("id", "ID"))
-            tts.speak(
-                "Ada uang masuk sebesar lima puluh ribu rupiah dari dana",
-                android.speech.tts.TextToSpeech.QUEUE_FLUSH,
-                null,
-                "MOCK_ID"
-            )
-
-            // 3. Kirim ke Backend (Sync)
-            // Sesuaikan endpoint-nya dengan fungsi simpan transaksi Mas
-            try {
-                val req = com.app.virtualsoundbox.data.remote.model.LoginRequest(
-                    uid = userSession.getUserId() ?: "",
-                    email = userSession.getUserEmail() ?: "",
-                    storeName = "MOCK_DANA",
-                    phoneNumber = nominal.toString(),
-                    category = message
-                )
-                RetrofitClient.instance.loginUser(req)
-            } catch (e: Exception) {
-                Log.e("AKD_MOCK", "Gagal sync backend: ${e.message}")
-            }
+            tts.speak("Ada uang masuk sebesar lima puluh ribu rupiah", android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "MOCK_ID")
 
             withContext(Dispatchers.Main) {
-                Toast.makeText(context, "Simulasi Berhasil: Check List Transaksi!", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "Simulasi Berhasil!", Toast.LENGTH_SHORT).show()
             }
         } catch (e: Exception) {
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "Simulasi Gagal: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
+            Log.e("MOCK", e.message ?: "")
         }
     }
 }
 
-// Komponen Pendukung
+// --- KOMPONEN UI PENDUKUNG (Banner, Card, Item, dll tetap sama) ---
 @Composable
 fun PremiumBanner(remainingTrial: Int, onClick: () -> Unit) {
     Card(onClick = onClick, colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF8E1)), border = BorderStroke(1.dp, Color(0xFFFFD54F)), modifier = Modifier.fillMaxWidth()) {
@@ -338,6 +347,20 @@ fun StatusCard(isEnabled: Boolean, onClick: () -> Unit) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(if (isEnabled) "Sound Horee Aktif" else "Izin Notifikasi Mati", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = contentColor)
                 Text(if (isEnabled) "Siap mendeteksi uang masuk" else "Klik untuk mengaktifkan izin", fontSize = 12.sp, color = contentColor.copy(alpha = 0.8f))
+            }
+        }
+    }
+}
+
+@Composable
+fun BatteryOptimizationCard(onClick: () -> Unit) {
+    Surface(onClick = onClick, color = Color.White, shape = MaterialTheme.shapes.medium, border = BorderStroke(1.dp, Color(0xFFEEEEEE))) {
+        Row(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Icon(Icons.Default.Settings, null, tint = Color.Gray)
+            Spacer(Modifier.width(12.dp))
+            Column {
+                Text("Optimalkan Performa", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                Text("Aktifkan auto-start agar suara lancar", fontSize = 12.sp, color = Color.Gray)
             }
         }
     }
@@ -396,20 +419,6 @@ fun EmptyStateView(label: String) {
 }
 
 @Composable
-fun BatteryOptimizationCard(onClick: () -> Unit) {
-    Surface(onClick = onClick, color = Color.White, shape = MaterialTheme.shapes.medium, border = BorderStroke(1.dp, Color(0xFFEEEEEE))) {
-        Row(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-            Icon(Icons.Default.Settings, null, tint = Color.Gray)
-            Spacer(Modifier.width(12.dp))
-            Column {
-                Text("Optimalkan Performa", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                Text("Aktifkan auto-start agar suara lancar", fontSize = 12.sp, color = Color.Gray)
-            }
-        }
-    }
-}
-
-@Composable
 fun ProfileDetailDialog(profile: UserProfile?, defaultName: String, onDismiss: () -> Unit, onLogout: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -423,9 +432,4 @@ fun ProfileDetailDialog(profile: UserProfile?, defaultName: String, onDismiss: (
 @Composable
 fun ProfileRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, value: String) {
     Row(Modifier.padding(vertical = 4.dp)) { Icon(icon, null, Modifier.size(16.dp), tint = Color.Gray); Spacer(Modifier.width(8.dp)); Column { Text(label, fontSize = 10.sp, color = Color.Gray); Text(value) } }
-}
-
-fun formatRupiah(number: Double?): String {
-    val format = NumberFormat.getCurrencyInstance(Locale("id", "ID"))
-    return format.format(number ?: 0.0).replace("Rp", "Rp ")
 }

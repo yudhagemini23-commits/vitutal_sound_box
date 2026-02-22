@@ -44,8 +44,17 @@ data class SubscriptionDto(
 )
 
 data class UpgradeRequest(
-    @SerializedName("user_id") val userId: String,
-    @SerializedName("plan_type") val planType: String
+    @SerializedName("user_id") // Jika backend Go masih butuh user_id di body (opsional)
+    val userId: String,
+
+    @SerializedName("plan_type")
+    val planType: String,
+
+    @SerializedName("iap_purchase_token")
+    val iapPurchaseToken: String = "",
+
+    @SerializedName("iap_order_id")
+    val iapOrderId: String = ""
 )
 
 data class UpgradeResponse(
