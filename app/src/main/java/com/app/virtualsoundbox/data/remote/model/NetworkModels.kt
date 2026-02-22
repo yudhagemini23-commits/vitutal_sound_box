@@ -2,6 +2,11 @@ package com.app.virtualsoundbox.data.remote.model
 
 import com.google.gson.annotations.SerializedName
 
+data class ProfileResponse(
+    @SerializedName("status") val status: String,
+    @SerializedName("data") val data: UserProfileDto // UserProfileDto yang sudah kita buat tadi
+)
+
 data class LoginRequest(
     @SerializedName("uid") val uid: String,
     @SerializedName("email") val email: String,

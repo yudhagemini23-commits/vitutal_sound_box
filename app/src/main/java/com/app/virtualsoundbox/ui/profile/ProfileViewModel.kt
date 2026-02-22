@@ -69,6 +69,35 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun syncProfileFromServer(uid: String) {
+        // 1. Ambil token yang tersimpan saat login
+        val token = userSession.getToken() ?: ""
+
+        viewModelScope.launch {
+            try {
+                // 2. Kirim token dengan format "Bearer <token>"
+                val response = RetrofitClient.instance.getProfile("Bearer $token", uid)
+
+                if (response.isSuccessful && response.body() != null) {
+                    val profileData = response.body()!!.data
+
+                    userSession.savePremiumStatus(
+                        isPremium = profileData.isPremium,
+                        remainingTrial = userSession.getRemainingTrial(),
+                        expiresAt = profileData.premiumExpiresAt
+                    )
+
+                    _setupState.value = SetupState.Success
+                    Log.d("Sync", "Profil berhasil diperbarui otomatis")
+                } else if (response.code() == 401) {
+                    Log.e("Sync", "Token expired atau tidak valid")
+                }
+            } catch (e: Exception) {
+                Log.e("Sync", "Gagal sync profil: ${e.message}")
+            }
+        }
+    }
+
     private suspend fun fetchNotificationRules() {
         try {
             val response = RetrofitClient.instance.getNotificationRules()

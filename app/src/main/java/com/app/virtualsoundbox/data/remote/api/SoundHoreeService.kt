@@ -2,6 +2,7 @@ package com.app.virtualsoundbox.data.remote.api
 
 import com.app.virtualsoundbox.data.remote.model.LoginRequest
 import com.app.virtualsoundbox.data.remote.model.AuthResponse
+import com.app.virtualsoundbox.data.remote.model.ProfileResponse
 import com.app.virtualsoundbox.data.remote.model.TransactionDto
 import com.app.virtualsoundbox.data.remote.model.UpgradeRequest
 import com.app.virtualsoundbox.data.remote.model.UpgradeResponse
@@ -10,6 +11,14 @@ import retrofit2.Response
 import retrofit2.http.*
 
 interface SoundHoreeService {
+
+    // --- Get Profile ---
+    @GET("profile/{uid}")
+    suspend fun getProfile(
+        @Header("Authorization") token: String, // Tambahkan ini
+        @Path("uid") uid: String
+    ): Response<ProfileResponse>
+    // ---------------------
 
     // Login / Register
     @POST("auth/login")

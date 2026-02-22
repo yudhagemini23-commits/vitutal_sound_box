@@ -73,46 +73,45 @@ fun DashboardScreen(
     val viewModel: DashboardViewModel = viewModel(factory = factory)
     val profileViewModel: ProfileViewModel = viewModel()
 
+    // --- STATES DATA ---
     val totalIncome by viewModel.totalIncome.collectAsStateWithLifecycle()
     val transactions by viewModel.transactions.collectAsStateWithLifecycle()
     val filterLabel by viewModel.filterLabel.collectAsStateWithLifecycle()
     val setupState by profileViewModel.setupState.collectAsStateWithLifecycle()
-
     val purchaseState by billingManager.purchaseState.collectAsStateWithLifecycle()
 
-    // --- STATES ---
+    // --- REAKTIF STATES ---
     var isPremium by remember { mutableStateOf(userSession.isPremium()) }
     var remainingTrial by remember { mutableStateOf(userSession.getRemainingTrial()) }
     var premiumExpiresAt by remember { mutableLongStateOf(userSession.getPremiumExpiresAt()) }
     var showSubscriptionPopup by remember { mutableStateOf(false) }
     var mockTapCount by remember { mutableIntStateOf(0) }
 
-    // --- 1. LOGIKA CEK EXPIRED LOKAL (REAL-TIME) ---
+    // --- 1. SATPAM WAKTU LOKAL (CEK REAL-TIME) ---
     LaunchedEffect(isPremium, premiumExpiresAt) {
         if (isPremium && premiumExpiresAt > 0) {
             while (true) {
                 val now = System.currentTimeMillis()
                 if (now > premiumExpiresAt) {
-                    // Jika waktu sekarang melewati expiry, paksa jadi free
                     isPremium = false
                     userSession.savePremiumStatus(false, 0, 0)
                     Toast.makeText(context, "Masa langganan berakhir", Toast.LENGTH_LONG).show()
                     break
                 }
-                delay(10000) // Cek setiap 10 detik agar hemat baterai tapi tetap responsif
+                delay(10000)
             }
         }
     }
 
-    // --- 2. SINKRONISASI SAAT APP DIBUKA ---
+    // --- 2. SINKRONISASI STARTUP ---
     LaunchedEffect(Unit) {
-        // A. Cek Google Play untuk perpanjangan otomatis (Auto-Renewal)
-        billingManager.checkActiveSubscriptions { token, orderId ->
-            val uid = userSession.getUserId() ?: ""
-            profileViewModel.upgradePremium("monthly", uid, token, orderId)
+        val uid = userSession.getUserId() ?: ""
+        if (uid.isNotEmpty()) {
+            profileViewModel.syncProfileFromServer(uid)
+            billingManager.checkActiveSubscriptions { token, orderId ->
+                profileViewModel.upgradePremium("monthly", uid, token, orderId)
+            }
         }
-
-        // B. Update Aturan Notifikasi
         withContext(Dispatchers.IO) {
             try {
                 val response = RetrofitClient.instance.getNotificationRules()
@@ -120,73 +119,73 @@ fun DashboardScreen(
                     val rulesJson = Gson().toJson(response.body())
                     userSession.saveNotificationRules(rulesJson)
                 }
-            } catch (e: Exception) {
-                Log.e("AKD_RULES", "Error sync rules: ${e.message}")
+            } catch (e: Exception) { Log.e("AKD_RULES", e.message ?: "") }
+        }
+    }
+
+    // --- 3. PATROLI BERKALA (TIAP 5 MENIT) ---
+    // Khusus untuk handle Google Tester yang masa langganannya dipercepat
+    LaunchedEffect(Unit) {
+        val uid = userSession.getUserId() ?: ""
+        if (uid.isEmpty()) return@LaunchedEffect
+        while (true) {
+            delay(5 * 60 * 1000) // 5 Menit
+            Log.d("AKD_DEBUG", "Patroli 5 Menit: Sync Status...")
+            billingManager.checkActiveSubscriptions { token, orderId ->
+                profileViewModel.upgradePremium("monthly", uid, token, orderId)
             }
+            profileViewModel.syncProfileFromServer(uid)
         }
     }
 
-    // --- 3. HANDLING PEMBAYARAN SUKSES ---
-    LaunchedEffect(purchaseState) {
-        if (purchaseState is BillingManager.PurchaseState.Success) {
-            val state = purchaseState as BillingManager.PurchaseState.Success
-            val uid = userSession.getUserId() ?: ""
-
-            // Estimasi lokal (30 hari) sambil menunggu balasan server
-            val estimatedExpiry = System.currentTimeMillis() + (30L * 24 * 60 * 60 * 1000)
-            userSession.savePremiumStatus(true, 0, estimatedExpiry)
-
-            isPremium = true
-            premiumExpiresAt = estimatedExpiry
-            showSubscriptionPopup = false
-
-            profileViewModel.upgradePremium("monthly", uid, state.token, state.orderId)
-            viewModel.unlockHistory()
-            Toast.makeText(context, "Premium Aktif!", Toast.LENGTH_SHORT).show()
-            billingManager.resetState()
-        } else if (purchaseState is BillingManager.PurchaseState.Error) {
-            Toast.makeText(context, (purchaseState as BillingManager.PurchaseState.Error).message, Toast.LENGTH_SHORT).show()
-            billingManager.resetState()
-        }
-    }
-
-    // --- 4. UPDATE DATA DARI SERVER (PROFILE SYNC) ---
+    // --- 4. HANDLING PEMBAYARAN & TUTUP POPUP ---
     LaunchedEffect(setupState) {
         if (setupState is SetupState.Success) {
             isPremium = userSession.isPremium()
             remainingTrial = userSession.getRemainingTrial()
             premiumExpiresAt = userSession.getPremiumExpiresAt()
-            showSubscriptionPopup = false
+
+            // TUTUP POPUP jika status sudah Premium
+            if (isPremium) {
+                showSubscriptionPopup = false
+            }
         }
     }
 
+    LaunchedEffect(purchaseState) {
+        when (purchaseState) {
+            is BillingManager.PurchaseState.Success -> {
+                val state = purchaseState as BillingManager.PurchaseState.Success
+                val uid = userSession.getUserId() ?: ""
+
+                // LANGSUNG TUTUP POPUP
+                showSubscriptionPopup = false
+
+                profileViewModel.upgradePremium("monthly", uid, state.token, state.orderId)
+                billingManager.resetState()
+                viewModel.unlockHistory()
+                Toast.makeText(context, "Horee! Premium Aktif.", Toast.LENGTH_SHORT).show()
+            }
+            is BillingManager.PurchaseState.Error -> {
+                Toast.makeText(context, (purchaseState as BillingManager.PurchaseState.Error).message, Toast.LENGTH_SHORT).show()
+                billingManager.resetState()
+            }
+            else -> {}
+        }
+    }
+
+    // Logic Tampilan Awal Popup
     LaunchedEffect(remainingTrial, isPremium) {
         if (!isPremium && remainingTrial <= 0) {
             showSubscriptionPopup = true
         }
     }
 
-    // Sinkronkan Notif Rules saat Buka App
-    LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) {
-            try {
-                val response = RetrofitClient.instance.getNotificationRules()
-                if (response.isSuccessful && response.body() != null) {
-                    val rulesJson = Gson().toJson(response.body())
-                    userSession.saveNotificationRules(rulesJson)
-                }
-            } catch (e: Exception) {
-                Log.e("AKD_RULES", "Gagal update rules: ${e.message}")
-            }
-        }
-    }
-
-    // --- STATE UI LOKAL ---
+    // --- UI STATE LOKAL ---
     var selectedFilterIndex by remember { mutableStateOf(0) }
     var userProfile by remember { mutableStateOf<UserProfile?>(null) }
     var showProfileDialog by remember { mutableStateOf(false) }
 
-    // --- DATE PICKER ---
     val calendar = Calendar.getInstance()
     val datePickerDialog = DatePickerDialog(
         context,
@@ -196,12 +195,9 @@ fun DashboardScreen(
             viewModel.setFilterCustom(selectedCal.timeInMillis, null)
             selectedFilterIndex = 2
         },
-        calendar.get(Calendar.YEAR),
-        calendar.get(Calendar.MONTH),
-        calendar.get(Calendar.DAY_OF_MONTH)
+        calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH), calendar.get(Calendar.DAY_OF_MONTH)
     )
 
-    // --- LOAD PROFIL ---
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             val profiles = db.userProfileDao().getAllProfiles()
@@ -220,15 +216,13 @@ fun DashboardScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column(
-                        modifier = Modifier.clickable {
-                            mockTapCount++
-                            if (mockTapCount >= 5) {
-                                mockTapCount = 0
-                                scope.launch { performMockNotification(context, repository, userSession) }
-                            }
+                    Column(modifier = Modifier.clickable {
+                        mockTapCount++
+                        if (mockTapCount >= 5) {
+                            mockTapCount = 0
+                            scope.launch { performMockNotification(context, repository, userSession) }
                         }
-                    ) {
+                    }) {
                         Text(displayName, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         Text(displayCategory, fontSize = 12.sp, color = Color.Gray)
                     }
@@ -254,19 +248,14 @@ fun DashboardScreen(
                     Spacer(modifier = Modifier.height(16.dp))
                 }
             }
-
             item {
                 StatusCard(isEnabled = isNotificationEnabled, onClick = onOpenNotificationSettings)
                 Spacer(modifier = Modifier.height(8.dp))
-
                 if (showBatteryOptimization) {
                     BatteryOptimizationCard(onClick = onOptimizeBattery)
                     Spacer(modifier = Modifier.height(24.dp))
-                } else {
-                    Spacer(modifier = Modifier.height(16.dp))
-                }
+                } else { Spacer(modifier = Modifier.height(16.dp)) }
             }
-
             item {
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChipUI("Hari Ini", selectedFilterIndex == 0) { selectedFilterIndex = 0; viewModel.setFilterToday() }
@@ -274,15 +263,12 @@ fun DashboardScreen(
                     FilterChipUI("📅 Pilih Tanggal", selectedFilterIndex == 2) { datePickerDialog.show() }
                 }
             }
-
             item {
                 TotalBalanceCard(totalAmount = totalIncome, label = "Total Masuk ($filterLabel)")
                 Spacer(modifier = Modifier.height(24.dp))
             }
-
-            if (groupedTransactions.isEmpty()) {
-                item { EmptyStateView(filterLabel) }
-            } else {
+            if (groupedTransactions.isEmpty()) { item { EmptyStateView(filterLabel) } }
+            else {
                 groupedTransactions.forEach { (date, trxs) ->
                     item { Text(text = date, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.Gray, modifier = Modifier.padding(vertical = 12.dp, horizontal = 4.dp)) }
                     items(trxs) { trx -> TransactionItem(trx) }
@@ -299,10 +285,7 @@ fun DashboardScreen(
             SubscriptionDialog(
                 remainingTrial = remainingTrial,
                 onDismiss = { if (remainingTrial > 0) showSubscriptionPopup = false },
-                onSubscribeSuccess = { _ ->
-                    // TRIGGER GOOGLE PLAY BILLING
-                    billingManager.launchPurchaseFlow(activity)
-                }
+                onSubscribeSuccess = { _ -> billingManager.launchPurchaseFlow(activity) }
             )
         }
     }
@@ -314,39 +297,25 @@ fun formatRupiah(number: Double?): String {
     return format.format(number ?: 0.0).replace("Rp", "Rp ")
 }
 
-// --- MOCK NOTIFIKASI (UNTUK TESTER) ---
-private suspend fun performMockNotification(
-    context: Context,
-    repository: TransactionRepository,
-    userSession: UserSession
-) {
+// --- MOCK NOTIFIKASI ---
+private suspend fun performMockNotification(context: Context, repository: TransactionRepository, userSession: UserSession) {
     withContext(Dispatchers.IO) {
         try {
             val nominal = 50000.0
             val appName = "com.dana.id"
             val message = "Berhasil terima uang Rp 50.000 dari Penguji Google"
-
-            val mockTrx = com.app.virtualsoundbox.model.Transaction(
-                id = 0, amount = nominal, sourceApp = appName, rawMessage = message,
-                timestamp = System.currentTimeMillis(), isTrialLimited = false
-            )
+            val mockTrx = Transaction(id = 0, amount = nominal, sourceApp = appName, rawMessage = message, timestamp = System.currentTimeMillis(), isTrialLimited = false)
             repository.insert(mockTrx)
-
             val tts = android.speech.tts.TextToSpeech(context) { }
             delay(500)
             tts.setLanguage(Locale("id", "ID"))
             tts.speak("Ada uang masuk sebesar lima puluh ribu rupiah", android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "MOCK_ID")
-
-            withContext(Dispatchers.Main) {
-                Toast.makeText(context, "Simulasi Berhasil!", Toast.LENGTH_SHORT).show()
-            }
-        } catch (e: Exception) {
-            Log.e("MOCK", e.message ?: "")
-        }
+            withContext(Dispatchers.Main) { Toast.makeText(context, "Simulasi Berhasil!", Toast.LENGTH_SHORT).show() }
+        } catch (e: Exception) { Log.e("MOCK", e.message ?: "") }
     }
 }
 
-// --- KOMPONEN UI PENDUKUNG (Banner, Card, Item, dll tetap sama) ---
+// --- KOMPONEN UI PENDUKUNG ---
 @Composable
 fun PremiumBanner(remainingTrial: Int, onClick: () -> Unit) {
     Card(onClick = onClick, colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF8E1)), border = BorderStroke(1.dp, Color(0xFFFFD54F)), modifier = Modifier.fillMaxWidth()) {
@@ -447,13 +416,7 @@ fun EmptyStateView(label: String) {
 
 @Composable
 fun ProfileDetailDialog(profile: UserProfile?, defaultName: String, onDismiss: () -> Unit, onLogout: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Profil Toko") },
-        text = { Column { ProfileRow(Icons.Default.Store, "Toko", profile?.storeName ?: defaultName); ProfileRow(Icons.Default.Phone, "WhatsApp", profile?.phoneNumber ?: "-") } },
-        confirmButton = { Button(onClick = onLogout, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFEBEE), contentColor = Color(0xFFC62828))) { Text("Keluar") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Tutup") } }
-    )
+    AlertDialog(onDismissRequest = onDismiss, title = { Text("Profil Toko") }, text = { Column { ProfileRow(Icons.Default.Store, "Toko", profile?.storeName ?: defaultName); ProfileRow(Icons.Default.Phone, "WhatsApp", profile?.phoneNumber ?: "-") } }, confirmButton = { Button(onClick = onLogout, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFEBEE), contentColor = Color(0xFFC62828))) { Text("Keluar") } }, dismissButton = { TextButton(onClick = onDismiss) { Text("Tutup") } } )
 }
 
 @Composable
