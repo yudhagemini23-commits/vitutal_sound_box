@@ -17,15 +17,20 @@ android {
         applicationId = "com.app.virtualsoundbox"
         minSdk = 24
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.0.3"
+        versionCode = 4
+        versionName = "1.0.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // 1. Mengaktifkan Obfuscation (Pengacak Kode & Keamanan)
+            isMinifyEnabled = true
+
+            // 2. Membuang resource (gambar/xml) yang tidak terpakai agar APK lebih kecil
+            isShrinkResources = true
+
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

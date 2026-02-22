@@ -1,21 +1,42 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# =========================================================
+# PROGUARD RULES UNTUK SOUND HOREE
+# =========================================================
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# 1. ATURAN CRASH REPORTING (SANGAT PENTING UNTUK GOOGLE PLAY)
+# Ini agar kalau ada error di HP user, log di Play Console tetap bisa dibaca
+# (menampilkan nomor baris asli), bukan cuma huruf acak.
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# 2. ATURAN GSON & DATA MODEL (WAJIB)
+# Mencegah variabel di data class diacak menjadi a, b, c yang membuat
+# proses parsing JSON dari server jadi gagal (null).
+-keep class com.app.virtualsoundbox.model.** { *; }
+-keep class com.app.virtualsoundbox.data.remote.model.** { *; }
+-keepattributes Signature
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# 3. ATURAN RETROFIT & OKHTTP (JARINGAN)
+# Mengamankan fungsi API agar tidak dibuang oleh R8 karena dianggap "tidak terpakai"
+-dontwarn okhttp3.**
+-dontwarn okio.**
+-dontwarn retrofit2.**
+-keepattributes Exceptions
+-keepclasseswithmembers class * {
+    @retrofit2.http.* <methods>;
+}
+
+# 4. ATURAN ROOM DATABASE (LOKAL)
+# Room men-generate kode secara otomatis, jika diacak aplikasinya akan langsung Force Close.
+-keep class com.app.virtualsoundbox.data.local.** { *; }
+-keep class * extends androidx.room.RoomDatabase
+-dontwarn androidx.room.**
+
+# 5. ATURAN FIREBASE & GOOGLE AUTH (LOGIN)
+# Mencegah error saat user mencoba login menggunakan akun Google.
+-dontwarn com.google.firebase.**
+-dontwarn com.google.android.gms.**
+
+# 6. ATURAN TAMBAHAN JETPACK COMPOSE & COROUTINES
+# Mencegah animasi atau state Compose hilang saat di-shrink
+-keep class androidx.compose.** { *; }
+-keep class kotlinx.coroutines.** { *; }
